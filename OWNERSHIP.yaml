@@ -1,0 +1,7 @@
+bounded_context: "platform"
+service_id: "svc-iac-modules"
+application_id: "app.iac.modules"
+data_owner_pattern: "N/A"
+event_namespace: "evt.iac.module"
+owning_squad: "Infrastructure and Data Platform Squad"
+wave: "0"
