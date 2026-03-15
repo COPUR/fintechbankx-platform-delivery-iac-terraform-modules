@@ -41,3 +41,18 @@ terraform plan \
 
 - These stacks provide baseline shared resources only.
 - Network, compute runtime, managed database/cache instances, and service mesh wiring should be layered via environment-specific IaC stacks.
+
+## Strict mTLS Enforcement
+
+This repository includes the Wave 0 strict mTLS policy validator pattern:
+
+- Workflow: `.github/workflows/strict-mtls-enforcement.yml`
+- Validator: `scripts/validation/validate-strict-mtls.mjs`
+
+Run locally:
+
+```bash
+npm ci
+npm test
+npm run validate:strict-mtls
+```
