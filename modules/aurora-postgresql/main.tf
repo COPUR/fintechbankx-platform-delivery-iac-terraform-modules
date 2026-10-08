@@ -137,7 +137,10 @@ resource "aws_secretsmanager_secret" "app" {
   description             = "Application credential for ${var.database_name}"
   kms_key_id              = local.kms_key_arn
   recovery_window_in_days = 7
-  tags                    = local.tags
+  # Operator-filled: the value is never in state, so the tf-plan role must
+  # never read it (github-oidc OwnTerraformWrittenSecretValues). Merged last
+  # so var.tags cannot override it.
+  tags = merge(local.tags, { "fintechbankx.io/value-in-state" = "false" })
 }
 
 # Schema owner (migration) credential container.
@@ -147,7 +150,10 @@ resource "aws_secretsmanager_secret" "migration" {
   description             = "Schema owner (Flyway migration) credential for ${var.database_name}"
   kms_key_id              = local.kms_key_arn
   recovery_window_in_days = 7
-  tags                    = local.tags
+  # Operator-filled: the value is never in state, so the tf-plan role must
+  # never read it (github-oidc OwnTerraformWrittenSecretValues). Merged last
+  # so var.tags cannot override it.
+  tags = merge(local.tags, { "fintechbankx.io/value-in-state" = "false" })
 }
 
 # --- Alarms -----------------------------------------------------------------
