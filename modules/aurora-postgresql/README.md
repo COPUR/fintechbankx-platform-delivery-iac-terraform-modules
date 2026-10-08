@@ -55,6 +55,7 @@ Examples: [`examples/aurora-postgresql`](../../examples/aurora-postgresql/main.t
 | `connections_alarm_threshold` | `number` | `100` | DatabaseConnections alarm threshold. |
 | `tags` | `map(string)` | `{}` | Resource tags. |
 | `observability_discovery` | `bool` | `true` | Tag resources fintechbankx.io/observability=enabled so the YACE CloudWatch exporter discovers them. |
+| `ssl_root_cert_path` | `string` | `"/etc/fintechbankx/rds-ca/global-bundle.pem"` | Path of the RDS CA bundle in the container, used by `sslmode=verify-full` in the JDBC URL outputs. |
 
 ## Outputs
 
@@ -66,7 +67,9 @@ Examples: [`examples/aurora-postgresql`](../../examples/aurora-postgresql/main.t
 | `endpoint` | Writer endpoint. |
 | `reader_endpoint` | Reader endpoint. |
 | `port` | PostgreSQL port. |
-| `jdbc_url` | JDBC URL with TLS required (Helm value config.DB_URL). |
+| `jdbc_url` | Writer JDBC URL with `sslmode=verify-full&sslrootcert=<ssl_root_cert_path>` (Helm value config.DB_URL). |
+| `reader_jdbc_url` | Reader JDBC URL with the same certificate verification. |
+| `ssl_root_cert_path` | Container path of the RDS CA bundle the URLs trust. |
 | `security_group_id` | Database security group. |
 | `kms_key_arn` | KMS key protecting storage and credentials (grant kms:Decrypt to the workload). |
 | `app_secret_arn` | Application credential secret ARN. |
@@ -75,9 +78,18 @@ Examples: [`examples/aurora-postgresql`](../../examples/aurora-postgresql/main.t
 
 ## Tests
 
-`terraform test` (Terraform >= 1.7, mock AWS provider, `command = plan`, no credentials) in [`tests/`](tests): `rds.force_ssl=1`, storage encrypted, deletion protection on, rotating CMK, observability tag; reserved user rejected.
+`terraform test` (Terraform >= 1.7, mock AWS provider, no credentials) in [`tests/`](tests): `rds.force_ssl=1`, storage encrypted, deletion protection on, rotating CMK, observability tag; reserved user rejected; JDBC URLs use `sslmode=verify-full` with the mounted CA bundle (`tls_verify_full.tftest.hcl`, `command = apply` against the mock provider).
 Run `terraform init -backend=false && terraform test` in this directory; CI runs it through
 `scripts/ci/terraform-validate-all.sh`.
+
+## TLS to the database (verify-full)
+
+`rds.force_ssl=1` makes the server refuse plaintext, but `sslmode=require` on the client still trusts any certificate. The
+JDBC URL outputs therefore use `sslmode=verify-full`: pgjdbc checks that the server certificate chains to the Amazon RDS
+CA and names the endpoint. The CA bundle reaches the pod from the platform: the mesh repository's trust-manager Bundle
+publishes ConfigMap `rds-ca-bundle` (key `global-bundle.pem`) in every service namespace, and the `fintechbankx-service`
+chart (cicd-templates) mounts it read-only at `/etc/fintechbankx/rds-ca`. A service with its own chart mounts the same
+ConfigMap at the same path or sets `ssl_root_cert_path`.
 
 ## Database roles (two-role pattern)
 

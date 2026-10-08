@@ -29,8 +29,18 @@ output "port" {
 }
 
 output "jdbc_url" {
-  description = "JDBC URL with TLS required (Helm value config.DB_URL)."
-  value       = "jdbc:postgresql://${aws_rds_cluster.this.endpoint}:${aws_rds_cluster.this.port}/${var.database_name}?sslmode=require"
+  description = "Writer JDBC URL that verifies the server certificate and host name (sslmode=verify-full) against the RDS CA bundle at ssl_root_cert_path (Helm value config.DB_URL)."
+  value       = "jdbc:postgresql://${aws_rds_cluster.this.endpoint}:${aws_rds_cluster.this.port}/${var.database_name}?${local.tls_params}"
+}
+
+output "reader_jdbc_url" {
+  description = "Reader JDBC URL with the same certificate verification as jdbc_url."
+  value       = "jdbc:postgresql://${aws_rds_cluster.this.reader_endpoint}:${aws_rds_cluster.this.port}/${var.database_name}?${local.tls_params}"
+}
+
+output "ssl_root_cert_path" {
+  description = "Container path of the RDS CA bundle the JDBC URLs trust (ConfigMap rds-ca-bundle, key global-bundle.pem, mounted by the service chart)."
+  value       = var.ssl_root_cert_path
 }
 
 output "security_group_id" {

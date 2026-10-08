@@ -202,3 +202,14 @@ variable "observability_discovery" {
   description = "Tag resources fintechbankx.io/observability=enabled so the YACE CloudWatch exporter discovers them."
   default     = true
 }
+
+variable "ssl_root_cert_path" {
+  type        = string
+  description = "Container path of the Amazon RDS CA bundle used by sslmode=verify-full in the JDBC URL outputs. The mesh platform publishes ConfigMap rds-ca-bundle (key global-bundle.pem) in every service namespace and the fintechbankx-service chart mounts it at /etc/fintechbankx/rds-ca."
+  default     = "/etc/fintechbankx/rds-ca/global-bundle.pem"
+
+  validation {
+    condition     = can(regex("^/[A-Za-z0-9._/-]+\\.pem$", var.ssl_root_cert_path))
+    error_message = "ssl_root_cert_path must be an absolute path to a .pem file."
+  }
+}

@@ -11,6 +11,9 @@ locals {
   engine_major = split(".", var.engine_version)[0]
   kms_key_arn  = var.kms_key_arn != null ? var.kms_key_arn : aws_kms_key.this[0].arn
   alarm_action = var.alarm_topic_arn == null ? [] : [var.alarm_topic_arn]
+  # rds.force_ssl only forces encryption; verify-full also checks that the
+  # server certificate chains to the RDS CA and names the endpoint.
+  tls_params = "sslmode=verify-full&sslrootcert=${var.ssl_root_cert_path}"
 }
 
 # --- Encryption -------------------------------------------------------------
