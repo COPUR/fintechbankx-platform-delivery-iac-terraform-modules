@@ -121,12 +121,30 @@ resource "aws_rds_cluster_instance" "this" {
   tags                                  = local.tags
 }
 
-# Application credential container. The DBA bootstrap creates the app role
-# and writes {"username", "password"}; Terraform never holds the value.
+# Two-role pattern (platform contract "Database roles"):
+#   db-migration  owner role of the service schema, used only by Flyway
+#                 (DDL); DB_MIGRATION_* in the migration step.
+#   db-app        runtime role (DB_USERNAME/DB_PASSWORD) with only the DML
+#                 grants the service needs, no DDL.
+# The DBA bootstrap creates both roles and writes {"username", "password"}
+# into these secrets; Terraform only creates the empty containers and never
+# holds the values.
+
+# Runtime (application) credential container.
 resource "aws_secretsmanager_secret" "app" {
   count                   = var.create_app_secret ? 1 : 0
   name                    = var.app_secret_name != null ? var.app_secret_name : "${var.name}/db-app"
   description             = "Application credential for ${var.database_name}"
+  kms_key_id              = local.kms_key_arn
+  recovery_window_in_days = 7
+  tags                    = local.tags
+}
+
+# Schema owner (migration) credential container.
+resource "aws_secretsmanager_secret" "migration" {
+  count                   = var.create_migration_secret ? 1 : 0
+  name                    = var.migration_secret_name != null ? var.migration_secret_name : "${var.name}/db-migration"
+  description             = "Schema owner (Flyway migration) credential for ${var.database_name}"
   kms_key_id              = local.kms_key_arn
   recovery_window_in_days = 7
   tags                    = local.tags

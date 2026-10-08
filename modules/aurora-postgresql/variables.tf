@@ -152,6 +152,23 @@ variable "app_secret_name" {
   default     = null
 }
 
+variable "create_migration_secret" {
+  type        = bool
+  description = "Create the empty schema-owner (migration) credential secret of the two-role pattern."
+  default     = true
+}
+
+variable "migration_secret_name" {
+  type        = string
+  description = "Schema-owner (Flyway) credential secret name, <env>/<service-slug>/db-migration. null keeps <name>/db-migration."
+  default     = null
+
+  validation {
+    condition     = var.migration_secret_name == null || can(regex("^[a-z0-9-]+/[a-z0-9-]+/db-migration$", var.migration_secret_name))
+    error_message = "migration_secret_name must be <env>/<service-slug>/db-migration."
+  }
+}
+
 variable "alarm_topic_arn" {
   type        = string
   description = "SNS topic for alarms; null disables notifications."

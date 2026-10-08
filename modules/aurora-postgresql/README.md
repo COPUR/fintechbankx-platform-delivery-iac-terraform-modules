@@ -78,3 +78,15 @@ Examples: [`examples/aurora-postgresql`](../../examples/aurora-postgresql/main.t
 `terraform test` (Terraform >= 1.7, mock AWS provider, `command = plan`, no credentials) in [`tests/`](tests): `rds.force_ssl=1`, storage encrypted, deletion protection on, rotating CMK, observability tag; reserved user rejected.
 Run `terraform init -backend=false && terraform test` in this directory; CI runs it through
 `scripts/ci/terraform-validate-all.sh`.
+
+## Database roles (two-role pattern)
+
+Each service database has two roles, created by the DBA bootstrap:
+
+| Role | Secret (this module creates the empty container) | Used by | Grants |
+|---|---|---|---|
+| Schema owner | `<env>/<service-slug>/db-migration` (`migration_secret_name`) | Flyway only (migration step or Job) | owns `sc_<ctx>_<cap>`; DDL |
+| Runtime | `<env>/<service-slug>/db-app` (`app_secret_name`) | the service pods (`DB_USERNAME`/`DB_PASSWORD`) | only the DML the service needs (e.g. SELECT, INSERT) |
+
+Both secrets hold `{"username", "password"}` and are read through the `aws-secrets-manager` ClusterSecretStore. Keep the owner credential out of the long-running pods: run Flyway as a separate step with the db-migration secret.
+

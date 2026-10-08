@@ -63,3 +63,32 @@ run "reserved_master_username_rejected" {
 
   expect_failures = [var.master_username]
 }
+
+run "two_role_secrets" {
+  command = plan
+
+  variables {
+    app_secret_name       = "dev/compliance-evidence-service/db-app"
+    migration_secret_name = "dev/compliance-evidence-service/db-migration"
+  }
+
+  assert {
+    condition     = aws_secretsmanager_secret.app[0].name == "dev/compliance-evidence-service/db-app"
+    error_message = "Runtime role secret must be <env>/<service-slug>/db-app."
+  }
+
+  assert {
+    condition     = aws_secretsmanager_secret.migration[0].name == "dev/compliance-evidence-service/db-migration"
+    error_message = "Owner (migration) role secret must be <env>/<service-slug>/db-migration."
+  }
+}
+
+run "migration_secret_name_convention" {
+  command = plan
+
+  variables {
+    migration_secret_name = "dev/compliance-evidence-service/db-app"
+  }
+
+  expect_failures = [var.migration_secret_name]
+}

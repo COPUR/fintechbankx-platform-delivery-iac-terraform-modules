@@ -57,3 +57,13 @@ output "master_user_secret_arn" {
   description = "RDS-managed admin credential, for the DBA bootstrap only."
   value       = aws_rds_cluster.this.master_user_secret[0].secret_arn
 }
+
+output "migration_secret_arn" {
+  description = "ARN of the schema-owner (migration) credential secret, or null."
+  value       = var.create_migration_secret ? aws_secretsmanager_secret.migration[0].arn : null
+}
+
+output "migration_secret_name" {
+  description = "Name of the schema-owner (migration) credential secret, or null."
+  value       = var.create_migration_secret ? aws_secretsmanager_secret.migration[0].name : null
+}
