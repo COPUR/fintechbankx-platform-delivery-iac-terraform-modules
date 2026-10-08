@@ -210,6 +210,24 @@ variable "terraform_state_bucket" {
   default     = null
 }
 
+variable "verify_terraform_state_bucket_policy" {
+  type        = bool
+  description = "Passed to github-oidc: read the state bucket's policy at plan time and fail the plan unless the CI deny statements of terraform_state_bucket_policy_json are merged into it (the bucket is bootstrapped outside this stack). The identity running the plan needs s3:GetBucketPolicy on the bucket."
+  default     = true
+}
+
+variable "manage_terraform_state_bucket_policy" {
+  type        = bool
+  description = "Passed to github-oidc: attach terraform_state_bucket_policy_json to the state bucket from this stack instead of verifying it. Replaces the bucket's whole policy: pass the bootstrap's statements in terraform_state_bucket_policy_source_json."
+  default     = false
+}
+
+variable "terraform_state_bucket_policy_source_json" {
+  type        = string
+  description = "Passed to github-oidc: existing state-bucket policy statements (TLS-only, encryption) kept when manage_terraform_state_bucket_policy is true."
+  default     = null
+}
+
 variable "terraform_lock_table" {
   type        = string
   description = "DynamoDB lock table."

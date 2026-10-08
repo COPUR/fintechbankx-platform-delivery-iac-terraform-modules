@@ -59,6 +59,7 @@ Examples: [`examples/github-oidc`](../../examples/github-oidc/main.tf).
 | `apply_policy_arns` | `list(string)` | `[]` | Policies granting what service Terraform creates (Aurora, KMS, Secrets Manager, IAM under a boundary). Kept explicit on purpose; AWS-managed AdministratorAccess, PowerUserAccess, ReadOnlyAccess and ViewOnlyAccess are rejected. |
 | `terraform_state_bucket_key_enabled` | `bool` | `false` | Set true if the state bucket uses S3 Bucket Keys (KMS encryption context is then the bucket ARN). |
 | `manage_terraform_state_bucket_policy` | `bool` | `false` | Attach `terraform_state_bucket_policy_json` to the state bucket (replaces its whole policy). |
+| `verify_terraform_state_bucket_policy` | `bool` | `false` | For a bucket owned elsewhere: read its policy at plan time (`s3:GetBucketPolicy`) and fail the plan unless the four `DenyCiTerraformRoles*` statements are in it as `Deny`. Ignored when `manage_terraform_state_bucket_policy` is true. |
 | `terraform_state_bucket_policy_source_json` | `string` | `null` | Existing state-bucket statements to keep, merged before the CI deny statements. |
 | `permissions_boundary_arn` | `string` | `null` | Permissions boundary for every CI role (recommended for tf-apply). |
 | `tags` | `map(string)` | `{}` | Resource tags. |
@@ -103,12 +104,16 @@ Every `tf-plan` / `tf-apply` role carries the tag `TerraformStateKey = <its key>
 `${aws:PrincipalTag/TerraformStateKey}` (and `.tflock`), every bucket action except listing their own key, and
 everything if the tag is missing. It has a fixed size whatever the number of services. Attach it with
 `manage_terraform_state_bucket_policy = true` (pass the bucket's existing statements in
-`terraform_state_bucket_policy_source_json`), or merge it into the policy of the bootstrap that owns the bucket.
-State keys must be unique per service (validated).
+`terraform_state_bucket_policy_source_json`), or merge it into the policy of the bootstrap that owns the bucket and
+set `verify_terraform_state_bucket_policy = true` so a plan fails while the merge is missing (`stacks/platform`
+does this by default). State keys must be unique per service (validated).
 
 Role names: `gha-<env>-<service id without svc->-<kind>`, at most 59 characters (service ids are limited to 42).
 
 ## Tests
+
+Offline (`terraform test`, mock provider) in `tests/`: least privilege, naming, workflow binding and
+`state_bucket_verification.tftest.hcl` (a bucket policy without the CI deny statements fails the plan).
 
 ## Binding the reusable workflow
 

@@ -584,3 +584,30 @@ resource "aws_s3_bucket_policy" "state" {
   bucket = var.terraform_state_bucket
   policy = data.aws_iam_policy_document.state_bucket.json
 }
+
+# Bucket owned elsewhere (bootstrap): prove at plan time that the CI deny
+# statements were merged. Without DenyCiTerraformRolesOtherStateObjects every
+# CI Terraform role could read every service's state. A bucket with no policy
+# at all fails earlier, in the provider read (NoSuchBucketPolicy).
+locals {
+  ci_state_bucket_deny_sids = [
+    "DenyCiTerraformRolesWithoutStateKeyTag",
+    "DenyCiTerraformRolesOtherStateObjects",
+    "DenyCiTerraformRolesBucketActionsExceptList",
+    "DenyCiTerraformRolesListOutsideOwnKey",
+  ]
+}
+
+data "aws_s3_bucket_policy" "state" {
+  count  = var.verify_terraform_state_bucket_policy && !var.manage_terraform_state_bucket_policy ? 1 : 0
+  bucket = var.terraform_state_bucket
+
+  lifecycle {
+    postcondition {
+      condition = length(setsubtract(local.ci_state_bucket_deny_sids, [
+        for s in try(flatten([jsondecode(self.policy).Statement]), []) : try(s.Sid, "") if try(s.Effect, "") == "Deny"
+      ])) == 0
+      error_message = "State bucket ${var.terraform_state_bucket} policy lacks Deny statement(s) ${join(", ", setsubtract(local.ci_state_bucket_deny_sids, [for s in try(flatten([jsondecode(self.policy).Statement]), []) : try(s.Sid, "") if try(s.Effect, "") == "Deny"]))}: merge output terraform_state_bucket_policy_json into the bucket policy (or set manage_terraform_state_bucket_policy)."
+    }
+  }
+}

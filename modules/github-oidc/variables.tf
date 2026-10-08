@@ -131,6 +131,12 @@ variable "manage_terraform_state_bucket_policy" {
   default     = false
 }
 
+variable "verify_terraform_state_bucket_policy" {
+  type        = bool
+  description = "For a state bucket owned outside this module: read its live policy (s3:GetBucketPolicy) and fail the plan unless every CI deny statement of terraform_state_bucket_policy_json (by Sid, Effect Deny) is in it. Ignored when manage_terraform_state_bucket_policy is true."
+  default     = false
+}
+
 variable "terraform_state_bucket_policy_source_json" {
   type        = string
   description = "Existing state-bucket policy statements to keep (e.g. TLS-only, deny unencrypted puts); merged before the CI deny statements."

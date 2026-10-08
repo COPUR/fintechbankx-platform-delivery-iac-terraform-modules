@@ -36,6 +36,14 @@ first; they are bootstrapped outside this stack. The bootstrap must merge the ou
 `terraform_state_bucket_policy_json` into the state bucket policy so a CI Terraform role can read only its own
 state key (see [`modules/github-oidc`](../../modules/github-oidc/README.md)).
 
+The stack enforces this: `verify_terraform_state_bucket_policy` (default `true`) reads the bucket policy at plan time
+and fails the plan unless the four `DenyCiTerraformRoles*` statements are in it as `Deny`
+(`DenyCiTerraformRolesOtherStateObjects` among them). The identity running the plan needs `s3:GetBucketPolicy` on
+the bucket. First run of a new environment: plan once with `-var verify_terraform_state_bucket_policy=false`, merge
+`terraform_state_bucket_policy_json` (shown in the plan's outputs) in the bootstrap, then plan normally. To let this
+stack own the policy instead, set `manage_terraform_state_bucket_policy = true` and pass the bootstrap's existing
+statements in `terraform_state_bucket_policy_source_json` (the attachment replaces the whole bucket policy).
+
 ## Outputs consumed elsewhere
 
 | Output | Consumer |

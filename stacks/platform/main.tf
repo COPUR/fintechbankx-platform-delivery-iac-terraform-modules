@@ -110,6 +110,12 @@ module "github_oidc" {
   terraform_lock_table        = var.terraform_lock_table
   terraform_state_kms_key_arn = var.terraform_state_kms_key_arn
   apply_policy_arns           = var.ci_apply_policy_arns
-  permissions_boundary_arn    = var.ci_permissions_boundary_arn
-  tags                        = local.tags
+
+  # The state bucket is bootstrapped outside this stack: verify by default that
+  # the bootstrap merged the CI deny statements; attaching is an opt-in.
+  verify_terraform_state_bucket_policy      = var.verify_terraform_state_bucket_policy
+  manage_terraform_state_bucket_policy      = var.manage_terraform_state_bucket_policy
+  terraform_state_bucket_policy_source_json = var.terraform_state_bucket_policy_source_json
+  permissions_boundary_arn                  = var.ci_permissions_boundary_arn
+  tags                                      = local.tags
 }
