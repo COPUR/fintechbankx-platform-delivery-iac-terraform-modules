@@ -133,3 +133,21 @@ run "secret_containers_optional" {
     error_message = "create_db_import_secrets=false creates no containers."
   }
 }
+
+run "reads_only_its_postgresql_log_group" {
+  command = plan
+
+  variables {
+    postgresql_log_group_arns = { "payment-request-to-pay-service" = "arn:aws:logs:me-central-1:111122223333:log-group:/aws/rds/cluster/dev-rtp/postgresql" }
+  }
+
+  assert {
+    condition     = toset(keys(aws_iam_role_policy.logs)) == toset(["payment-request-to-pay-service"])
+    error_message = "Log read only for services with a log group."
+  }
+
+  assert {
+    condition     = [for s in data.aws_iam_policy_document.logs["payment-request-to-pay-service"].statement : s.resources if s.sid == "ReadPostgresqlLogGroup"][0] == toset(["arn:aws:logs:me-central-1:111122223333:log-group:/aws/rds/cluster/dev-rtp/postgresql", "arn:aws:logs:me-central-1:111122223333:log-group:/aws/rds/cluster/dev-rtp/postgresql:*"])
+    error_message = "Only that log group and its streams."
+  }
+}

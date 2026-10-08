@@ -68,3 +68,14 @@ variable "recovery_window_in_days" {
   description = "Recovery window of the db-import secrets."
   default     = 30
 }
+
+variable "postgresql_log_group_arns" {
+  type        = map(string)
+  description = "Optional CloudWatch log group ARN per service slug (the aurora-postgresql log group, e.g. postgresql_log_group_arn). The operator role may then read that group (pgaudit and DDL audit lines) and nothing else in CloudWatch Logs."
+  default     = {}
+
+  validation {
+    condition     = alltrue([for k, a in var.postgresql_log_group_arns : can(regex("^arn:aws[a-z-]*:logs:[a-z0-9-]+:[0-9]{12}:log-group:[A-Za-z0-9_./#-]+(:\\*)?$", a))])
+    error_message = "postgresql_log_group_arns values must be CloudWatch log group ARNs without wildcards in the name."
+  }
+}

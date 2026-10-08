@@ -66,6 +66,30 @@ data "aws_iam_policy_document" "access" {
   }
 }
 
+data "aws_iam_policy_document" "logs" {
+  for_each = { for s, a in var.postgresql_log_group_arns : s => trimsuffix(a, ":*") if contains(var.service_slugs, s) }
+
+  statement {
+    sid       = "ReadPostgresqlLogGroup"
+    actions   = ["logs:DescribeLogStreams", "logs:GetLogEvents", "logs:FilterLogEvents", "logs:StartQuery"]
+    resources = [each.value, "${each.value}:*"]
+  }
+
+  statement {
+    sid       = "ReadQueryResults"
+    actions   = ["logs:GetQueryResults", "logs:StopQuery"]
+    resources = ["*"]
+  }
+}
+
+resource "aws_iam_role_policy" "logs" {
+  for_each = data.aws_iam_policy_document.logs
+
+  name   = "postgresql-log-read"
+  role   = aws_iam_role.this[each.key].id
+  policy = each.value.json
+}
+
 resource "aws_iam_role_policy" "access" {
   for_each = toset(var.service_slugs)
 
