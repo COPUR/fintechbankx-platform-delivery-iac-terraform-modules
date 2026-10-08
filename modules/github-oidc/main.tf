@@ -427,6 +427,32 @@ data "aws_iam_policy_document" "plan_read" {
     }
   }
 
+  # GetSecretValue on a secret encrypted with a customer managed key
+  # (documentdb-cluster, elasticache-redis, microservice-base kms_key_arn)
+  # also needs kms:Decrypt. Only through Secrets Manager and only with the
+  # service's own secret ARN in the encryption context, so this grants nothing
+  # beyond the tag-scoped GetSecretValue above. Not every service key has an
+  # alias (elasticache-redis creates none; microservice-base takes the
+  # caller's key), so no kms:ResourceAliases condition.
+  statement {
+    sid       = "DecryptOwnSecretsViaSecretsManager"
+    actions   = ["kms:Decrypt"]
+    resources = ["arn:${local.partition}:kms:${local.region}:${local.account_id}:key/*"]
+    condition {
+      test     = "StringEquals"
+      variable = "kms:ViaService"
+      values   = ["secretsmanager.${local.region}.amazonaws.com"]
+    }
+    condition {
+      test     = "StringLike"
+      variable = "kms:EncryptionContext:SecretARN"
+      values = [
+        "arn:${local.partition}:secretsmanager:${local.region}:${local.account_id}:secret:${var.environment}/${var.services[each.value.id].image_name}/*",
+        "arn:${local.partition}:secretsmanager:${local.region}:${local.account_id}:secret:${local.service_prefix[each.value.id]}/*",
+      ]
+    }
+  }
+
   statement {
     sid = "OwnIamRolesAndPolicies"
     actions = [
