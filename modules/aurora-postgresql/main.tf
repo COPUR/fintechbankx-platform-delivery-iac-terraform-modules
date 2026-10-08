@@ -29,6 +29,7 @@ locals {
     "GRANT USAGE ON SCHEMA ${var.schema_name} TO ${var.app_role_name};",
     "ALTER DEFAULT PRIVILEGES FOR ROLE ${var.migration_role_name} IN SCHEMA ${var.schema_name} GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO ${var.app_role_name};",
     "ALTER DEFAULT PRIVILEGES FOR ROLE ${var.migration_role_name} IN SCHEMA ${var.schema_name} GRANT USAGE, SELECT ON SEQUENCES TO ${var.app_role_name};",
+    var.pgaudit_enabled ? "CREATE EXTENSION IF NOT EXISTS pgaudit;" : "-- pgaudit disabled (pgaudit_enabled = false)",
     "",
   ]) : null
 }
@@ -90,6 +91,26 @@ resource "aws_rds_cluster_parameter_group" "this" {
   parameter {
     name  = "log_min_duration_statement"
     value = tostring(var.log_min_duration_statement_ms)
+  }
+
+  # pgaudit: DDL and role/grant changes are audit evidence (schema changes by
+  # the migration role, grants to the runtime role). shared_preload_libraries
+  # is static: on an existing cluster it takes effect after a reboot.
+  dynamic "parameter" {
+    for_each = var.pgaudit_enabled ? [1] : []
+    content {
+      name         = "shared_preload_libraries"
+      value        = "pgaudit"
+      apply_method = "pending-reboot"
+    }
+  }
+
+  dynamic "parameter" {
+    for_each = var.pgaudit_enabled ? [1] : []
+    content {
+      name  = "pgaudit.log"
+      value = join(",", var.pgaudit_log_classes)
+    }
   }
 }
 

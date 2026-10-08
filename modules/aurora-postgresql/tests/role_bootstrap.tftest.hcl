@@ -61,6 +61,11 @@ run "owner_owns_the_schema_runtime_gets_dml_only" {
   }
 
   assert {
+    condition     = strcontains(output.role_bootstrap_sql, "CREATE EXTENSION IF NOT EXISTS pgaudit;")
+    error_message = "The bootstrap registers pgaudit when it is enabled."
+  }
+
+  assert {
     condition     = strcontains(output.role_bootstrap_sql, "REVOKE CREATE ON SCHEMA public FROM PUBLIC;")
     error_message = "Nobody may create objects in the public schema."
   }

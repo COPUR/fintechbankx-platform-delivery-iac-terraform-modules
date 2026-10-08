@@ -55,6 +55,8 @@ Examples: [`examples/aurora-postgresql`](../../examples/aurora-postgresql/main.t
 | `connections_alarm_threshold` | `number` | `100` | DatabaseConnections alarm threshold. |
 | `tags` | `map(string)` | `{}` | Resource tags. |
 | `observability_discovery` | `bool` | `true` | Tag resources fintechbankx.io/observability=enabled so the YACE CloudWatch exporter discovers them. |
+| `pgaudit_enabled` | `bool` | `true` | Preload `pgaudit` and set `pgaudit.log`. |
+| `pgaudit_log_classes` | `list(string)` | `["ddl", "role"]` | `pgaudit.log` classes. |
 | `schema_name` | `string` | `null` | Service schema `sc_<ctx>_<cap>`; with the two role names renders `role_bootstrap_sql`. |
 | `app_role_name` | `string` | `null` | Runtime role (pods): `USAGE` + DML only. |
 | `migration_role_name` | `string` | `null` | Schema-owner role (Flyway only); must differ from `app_role_name`. |
@@ -86,6 +88,15 @@ Examples: [`examples/aurora-postgresql`](../../examples/aurora-postgresql/main.t
 `terraform test` (Terraform >= 1.7, mock AWS provider, no credentials) in [`tests/`](tests): `rds.force_ssl=1`, storage encrypted, deletion protection on, rotating CMK, observability tag; reserved user rejected; JDBC URLs use `sslmode=verify-full` with the mounted CA bundle (`tls_verify_full.tftest.hcl`, `command = apply` against the mock provider).
 Run `terraform init -backend=false && terraform test` in this directory; CI runs it through
 `scripts/ci/terraform-validate-all.sh`.
+
+## Audit logging (pgaudit)
+
+The cluster parameter group preloads `pgaudit` (`shared_preload_libraries`, `apply_method = pending-reboot`) and sets
+`pgaudit.log = ddl,role` by default, so schema changes (Flyway as the owner role) and role or grant changes reach the
+`postgresql` log export in CloudWatch. No cluster is deployed yet, so the default costs nothing now; **enabling it on an
+existing cluster needs a reboot of every instance** before `shared_preload_libraries` takes effect. Statement classes
+are configurable (`pgaudit_log_classes`); `read`/`write` log data access and can include personal data in statements.
+Register the extension once per database (`CREATE EXTENSION pgaudit;`) as part of the DBA bootstrap.
 
 ## TLS to the database (verify-full)
 

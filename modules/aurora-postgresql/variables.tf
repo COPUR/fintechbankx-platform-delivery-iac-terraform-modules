@@ -246,3 +246,20 @@ variable "migration_role_name" {
     error_message = "migration_role_name must be a lower-case PostgreSQL identifier different from app_role_name."
   }
 }
+
+variable "pgaudit_enabled" {
+  type        = bool
+  description = "Preload pgaudit (shared_preload_libraries) and set pgaudit.log. Static parameter: enabling it on an existing cluster needs a reboot."
+  default     = true
+}
+
+variable "pgaudit_log_classes" {
+  type        = list(string)
+  description = "pgaudit.log statement classes. Default ddl,role: schema changes and role/grant changes."
+  default     = ["ddl", "role"]
+
+  validation {
+    condition     = length(var.pgaudit_log_classes) > 0 && alltrue([for c in var.pgaudit_log_classes : contains(["read", "write", "function", "role", "ddl", "misc", "misc_set", "all"], c)])
+    error_message = "pgaudit_log_classes entries must be pgaudit classes: read, write, function, role, ddl, misc, misc_set, all."
+  }
+}
