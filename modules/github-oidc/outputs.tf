@@ -16,3 +16,8 @@ output "deploy_kubernetes_groups" {
   description = "Service id -> Kubernetes group to bind to a namespaced Role (RoleBinding lives with the mesh/k8s platform repo)."
   value       = { for id, s in var.services : id => "fintechbankx:deploy:${s.namespace}" }
 }
+
+output "terraform_state_bucket_policy_json" {
+  description = "State-bucket policy that denies each CI Terraform role every key but its own (TerraformStateKey tag). Attach it (manage_terraform_state_bucket_policy) or merge it into the bucket owner's policy."
+  value       = data.aws_iam_policy_document.state_bucket.json
+}

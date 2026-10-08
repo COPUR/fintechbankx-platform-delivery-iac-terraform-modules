@@ -95,6 +95,11 @@ output "github_oidc_role_arns" {
   value       = module.github_oidc.role_arns
 }
 
+output "terraform_state_bucket_policy_json" {
+  description = "State-bucket policy denying each CI Terraform role every key but its own; merge it into the state bucket policy (bootstrap)."
+  value       = module.github_oidc.terraform_state_bucket_policy_json
+}
+
 output "deploy_kubernetes_groups" {
   description = "Service id -> Kubernetes group of its deploy role; bind to a namespaced Role."
   value       = module.github_oidc.deploy_kubernetes_groups

@@ -32,7 +32,9 @@ terraform plan -var-file=environments/dev.tfvars
 ```
 
 The state bucket and lock table (`fintechbankx-terraform-state-<env>`, `fintechbankx-terraform-locks`) must exist
-first; they are bootstrapped outside this stack.
+first; they are bootstrapped outside this stack. The bootstrap must merge the output
+`terraform_state_bucket_policy_json` into the state bucket policy so a CI Terraform role can read only its own
+state key (see [`modules/github-oidc`](../../modules/github-oidc/README.md)).
 
 ## Outputs consumed elsewhere
 
@@ -43,6 +45,7 @@ first; they are bootstrapped outside this stack.
 | `msk_topic_admin_policy_arn` | topic provisioning job (event-streaming repo) |
 | `ecr_repository_urls`, `github_oidc_role_arns` | service repos' GitHub variables (`ECR_PUSH_ROLE_ARN`, `EKS_DEPLOY_ROLE_ARN_<ENV>`) |
 | `deploy_kubernetes_groups` | mesh repo: RoleBinding per namespace |
+| `terraform_state_bucket_policy_json` | state bucket bootstrap (per environment) |
 | `external_secrets_role_arn` | mesh repo: `external-secrets` service account annotation |
 | `vpc_cidr`, `private_subnet_cidrs`, `msk_security_group_id`, `msk_subnet_ids` | mesh repo `params.env` |
 | `ingress_tls_secret_name` | mesh repo: gateway certificate at Secrets Manager `<env>/platform/ingress-tls` (created and filled outside Terraform; no certificate material in this repository) |

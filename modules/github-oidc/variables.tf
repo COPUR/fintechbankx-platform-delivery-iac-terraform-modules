@@ -38,8 +38,11 @@ variable "services" {
     image_name          = string
     namespace           = string
     terraform_state_key = string
+    # Name prefix of the service's own AWS resources the tf-plan role may
+    # describe; null uses <env>-<image_name>.
+    resource_name_prefix = optional(string)
   }))
-  description = "Service id -> GitHub repository, image name (= Kubernetes service account), context namespace and Terraform state key."
+  description = "Service id -> GitHub repository, image name (= Kubernetes service account and service slug), context namespace, Terraform state key (one per service) and optional resource name prefix."
   default     = {}
 
   validation {
@@ -48,9 +51,15 @@ variable "services" {
       can(regex("^[A-Za-z0-9_.-]+$", s.repository)) &&
       can(regex("^[a-z][a-z0-9-]+$", s.image_name)) &&
       can(regex("^[a-z][a-z0-9-]+$", s.namespace)) &&
-      !strcontains(s.terraform_state_key, "*")
+      can(regex("^[A-Za-z0-9_.:/=+@-]{1,240}$", s.terraform_state_key)) &&
+      (s.resource_name_prefix == null || can(regex("^[a-z][a-z0-9-]+$", coalesce(s.resource_name_prefix, "x"))))
     ])
-    error_message = "Keys must be service ids of at most 42 characters (role name limit); repository, image_name and namespace must be plain names; state keys must not contain wildcards."
+    error_message = "Keys must be service ids of at most 42 characters (role name limit); repository, image_name and namespace must be plain names; state keys must use IAM tag value characters only (no wildcards, at most 240 characters); resource_name_prefix must be lowercase kebab-case."
+  }
+
+  validation {
+    condition     = length(distinct([for s in values(var.services) : s.terraform_state_key])) == length(var.services)
+    error_message = "Each service needs its own terraform_state_key; two services may not share state."
   }
 }
 
@@ -90,8 +99,31 @@ variable "terraform_state_kms_key_arn" {
 
 variable "apply_policy_arns" {
   type        = list(string)
-  description = "Policies granting what service Terraform creates (Aurora, KMS, Secrets Manager, IAM under a boundary). Kept explicit on purpose."
+  description = "Policies granting what service Terraform creates (Aurora, KMS, Secrets Manager, IAM under a boundary). Kept explicit on purpose; AWS-managed AdministratorAccess, PowerUserAccess, ReadOnlyAccess and ViewOnlyAccess are rejected."
   default     = []
+
+  validation {
+    condition     = alltrue([for a in var.apply_policy_arns : !can(regex(":iam::aws:policy/(AdministratorAccess|PowerUserAccess|ReadOnlyAccess|ViewOnlyAccess)$", a))])
+    error_message = "apply_policy_arns must not include AdministratorAccess, PowerUserAccess, ReadOnlyAccess or ViewOnlyAccess; grant service-scoped policies."
+  }
+}
+
+variable "terraform_state_bucket_key_enabled" {
+  type        = bool
+  description = "Set true if the state bucket uses S3 Bucket Keys: the KMS encryption context is then the bucket ARN instead of the object ARN (per-key scoping relies on the S3 policies alone)."
+  default     = false
+}
+
+variable "manage_terraform_state_bucket_policy" {
+  type        = bool
+  description = "Attach terraform_state_bucket_policy_json to the state bucket. This replaces the bucket's whole policy: pass existing statements in terraform_state_bucket_policy_source_json."
+  default     = false
+}
+
+variable "terraform_state_bucket_policy_source_json" {
+  type        = string
+  description = "Existing state-bucket policy statements to keep (e.g. TLS-only, deny unencrypted puts); merged before the CI deny statements."
+  default     = null
 }
 
 variable "permissions_boundary_arn" {

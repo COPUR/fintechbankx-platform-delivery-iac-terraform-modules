@@ -191,8 +191,10 @@ variable "github_services" {
     image_name          = string
     namespace           = string
     terraform_state_key = string
+    # Optional: name prefix of the service's AWS resources (default <env>-<image_name>).
+    resource_name_prefix = optional(string)
   }))
-  description = "Service id -> GitHub repository, image name, context namespace and its deploy/terraform state key (see modules/github-oidc)."
+  description = "Service id -> GitHub repository, image name, context namespace and its deploy/terraform state key, one per service (see modules/github-oidc)."
   default     = {}
 }
 
