@@ -55,6 +55,9 @@ Examples: [`examples/aurora-postgresql`](../../examples/aurora-postgresql/main.t
 | `connections_alarm_threshold` | `number` | `100` | DatabaseConnections alarm threshold. |
 | `tags` | `map(string)` | `{}` | Resource tags. |
 | `observability_discovery` | `bool` | `true` | Tag resources fintechbankx.io/observability=enabled so the YACE CloudWatch exporter discovers them. |
+| `schema_name` | `string` | `null` | Service schema `sc_<ctx>_<cap>`; with the two role names renders `role_bootstrap_sql`. |
+| `app_role_name` | `string` | `null` | Runtime role (pods): `USAGE` + DML only. |
+| `migration_role_name` | `string` | `null` | Schema-owner role (Flyway only); must differ from `app_role_name`. |
 | `ssl_root_cert_path` | `string` | `"/etc/fintechbankx/rds-ca/global-bundle.pem"` | Path of the RDS CA bundle in the container, used by `sslmode=verify-full` in the JDBC URL outputs. |
 
 ## Outputs
@@ -70,6 +73,8 @@ Examples: [`examples/aurora-postgresql`](../../examples/aurora-postgresql/main.t
 | `jdbc_url` | Writer JDBC URL with `sslmode=verify-full&sslrootcert=<ssl_root_cert_path>` (Helm value config.DB_URL). |
 | `reader_jdbc_url` | Reader JDBC URL with the same certificate verification. |
 | `ssl_root_cert_path` | Container path of the RDS CA bundle the URLs trust. |
+| `migration_secret_arn` / `migration_secret_name` | Schema-owner (Flyway) credential secret. |
+| `role_bootstrap_sql` | DBA bootstrap SQL of the two-role pattern, or null. |
 | `security_group_id` | Database security group. |
 | `kms_key_arn` | KMS key protecting storage and credentials (grant kms:Decrypt to the workload). |
 | `app_secret_arn` | Application credential secret ARN. |
@@ -99,6 +104,20 @@ Each service database has two roles, created by the DBA bootstrap:
 |---|---|---|---|
 | Schema owner | `<env>/<service-slug>/db-migration` (`migration_secret_name`) | Flyway only (migration step or Job) | owns `sc_<ctx>_<cap>`; DDL |
 | Runtime | `<env>/<service-slug>/db-app` (`app_secret_name`) | the service pods (`DB_USERNAME`/`DB_PASSWORD`) | only the DML the service needs (e.g. SELECT, INSERT) |
+
+`role_bootstrap_sql` (set `schema_name`, `app_role_name` and `migration_role_name`) renders the DBA bootstrap for these
+roles: the owner role owns `sc_<ctx>_<cap>` and runs Flyway; the runtime role gets `USAGE` on the schema and, through
+`ALTER DEFAULT PRIVILEGES FOR ROLE <owner>`, only `SELECT, INSERT, UPDATE, DELETE` on tables (and `USAGE, SELECT` on
+sequences) that Flyway creates: no DDL, no `TRUNCATE`, no ownership. The SQL carries no password; the DBA sets each
+one with `\password` from its secret. `tests/role_bootstrap.tftest.hcl` pins these grants. Example (request to pay):
+`schema_name = "sc_pay_request_to_pay"`, `app_role_name = "payment_request_to_pay_app"`,
+`migration_role_name = "payment_request_to_pay_migration"`.
+
+Migration step convention: Flyway runs as a Kubernetes Job (or CI step) with the db-migration secret, never in the
+service pods (`spring.flyway.enabled=false` there, no `create-schemas`). Job pods carry `app.kubernetes.io/name=<sa>`
+(the mesh grants Aurora egress on that label) and `app.kubernetes.io/component=db-migration`; service pods carry
+`app.kubernetes.io/component=service`, and the `fintechbankx-service` chart selects only those. Both use the JDBC URL
+outputs (`sslmode=verify-full`) and mount the RDS CA bundle (section above).
 
 Both secrets hold `{"username", "password"}` and are read through the `aws-secrets-manager` ClusterSecretStore. Keep the owner credential out of the long-running pods: run Flyway as a separate step with the db-migration secret. Both are tagged `fintechbankx.io/value-in-state = false` after `var.tags` is merged, so no caller tag can make them readable by the pull-request `tf-plan` role (`github-oidc`).
 

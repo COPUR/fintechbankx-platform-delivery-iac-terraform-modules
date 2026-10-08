@@ -213,3 +213,36 @@ variable "ssl_root_cert_path" {
     error_message = "ssl_root_cert_path must be an absolute path to a .pem file."
   }
 }
+
+variable "schema_name" {
+  type        = string
+  description = "Service schema, sc_<ctx>_<capability> (e.g. sc_pay_request_to_pay). With app_role_name and migration_role_name it renders role_bootstrap_sql; null renders none."
+  default     = null
+
+  validation {
+    condition     = var.schema_name == null || can(regex("^sc_[a-z][a-z0-9_]{1,59}$", var.schema_name))
+    error_message = "schema_name must be sc_<ctx>_<capability> in lower case."
+  }
+}
+
+variable "app_role_name" {
+  type        = string
+  description = "Runtime PostgreSQL role of the service pods (credential in app_secret_name): USAGE on the schema and DML only."
+  default     = null
+
+  validation {
+    condition     = var.app_role_name == null || can(regex("^[a-z][a-z0-9_]{1,62}$", var.app_role_name))
+    error_message = "app_role_name must be a lower-case PostgreSQL identifier."
+  }
+}
+
+variable "migration_role_name" {
+  type        = string
+  description = "Schema-owner PostgreSQL role used only by Flyway (credential in the db-migration secret). Must differ from app_role_name."
+  default     = null
+
+  validation {
+    condition     = var.migration_role_name == null || (can(regex("^[a-z][a-z0-9_]{1,62}$", var.migration_role_name)) && var.migration_role_name != var.app_role_name)
+    error_message = "migration_role_name must be a lower-case PostgreSQL identifier different from app_role_name."
+  }
+}

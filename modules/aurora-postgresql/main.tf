@@ -14,6 +14,23 @@ locals {
   # rds.force_ssl only forces encryption; verify-full also checks that the
   # server certificate chains to the RDS CA and names the endpoint.
   tls_params = "sslmode=verify-full&sslrootcert=${var.ssl_root_cert_path}"
+
+  # Two-role DBA bootstrap (request-to-pay PR #14 review): the runtime role
+  # never owns the schema, so a compromised pod cannot ALTER, DROP or TRUNCATE.
+  roles_named = var.schema_name != null && var.app_role_name != null && var.migration_role_name != null
+  role_bootstrap_sql = local.roles_named ? join("\n", [
+    "-- Two-role bootstrap for ${var.database_name} (run as the RDS admin; set each password with \\password from its secret).",
+    "CREATE ROLE ${var.migration_role_name} LOGIN;",
+    "CREATE ROLE ${var.app_role_name} LOGIN;",
+    "REVOKE ALL ON DATABASE ${var.database_name} FROM PUBLIC;",
+    "REVOKE CREATE ON SCHEMA public FROM PUBLIC;",
+    "GRANT CONNECT ON DATABASE ${var.database_name} TO ${var.migration_role_name}, ${var.app_role_name};",
+    "CREATE SCHEMA IF NOT EXISTS ${var.schema_name} AUTHORIZATION ${var.migration_role_name};",
+    "GRANT USAGE ON SCHEMA ${var.schema_name} TO ${var.app_role_name};",
+    "ALTER DEFAULT PRIVILEGES FOR ROLE ${var.migration_role_name} IN SCHEMA ${var.schema_name} GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO ${var.app_role_name};",
+    "ALTER DEFAULT PRIVILEGES FOR ROLE ${var.migration_role_name} IN SCHEMA ${var.schema_name} GRANT USAGE, SELECT ON SEQUENCES TO ${var.app_role_name};",
+    "",
+  ]) : null
 }
 
 # --- Encryption -------------------------------------------------------------

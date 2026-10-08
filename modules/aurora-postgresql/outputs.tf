@@ -77,3 +77,8 @@ output "migration_secret_name" {
   description = "Name of the schema-owner (migration) credential secret, or null."
   value       = var.create_migration_secret ? aws_secretsmanager_secret.migration[0].name : null
 }
+
+output "role_bootstrap_sql" {
+  description = "DBA bootstrap SQL of the two-role pattern (run once as the RDS admin, in database_name): owner role owns the schema and runs Flyway; runtime role gets USAGE and DML only. No passwords: the DBA sets them from the db-migration and db-app secrets. null unless schema_name, app_role_name and migration_role_name are set."
+  value       = local.role_bootstrap_sql
+}
