@@ -112,8 +112,9 @@ Role names: `gha-<env>-<service id without svc->-<kind>`, at most 59 characters 
 
 ## Tests
 
-Offline (`terraform test`, mock provider) in `tests/`: least privilege, naming, workflow binding and
-`state_bucket_verification.tftest.hcl` (a bucket policy without the CI deny statements fails the plan).
+`terraform test` (Terraform >= 1.7, mock AWS provider, `command = plan`, no credentials) in [`tests/`](tests): role names within 64 characters; `sub` per role kind (main, environment, pull request); no wildcard trust; over-long service id rejected; no AWS-managed broad policy on any role and none at all on plan roles; plan-role S3 statements reference only its own key, ListBucket limited by exact prefix, no write actions except its own lock item, KMS decrypt via S3 for its own object only, no other service's resources or secrets, `*` only for Describe/List; state-bucket deny statements, and a plan that fails while the bucket policy lacks them (`verify_terraform_state_bucket_policy`); plan-role `kms:Decrypt` only via Secrets Manager for its own secret ARNs; duplicate state keys and AdministratorAccess in `apply_policy_arns` rejected; deploy role pulls only its own repository (optionally in `ecr_registry_account_id`) and cannot push; with `bind_platform_workflow_ref` each role trusts only its platform workflow at a release tag or SHA, and branch refs are refused.
+Run `terraform init -backend=false && terraform test` in this directory; CI runs it through
+`scripts/ci/terraform-validate-all.sh`.
 
 ## Binding the reusable workflow
 
@@ -131,6 +132,12 @@ PUT /repos/<org>/<repo>/actions/oidc/customization/sub
 A caller pinning the workflows by SHA (`@<sha> # v1.0.0`) presents `job_workflow_ref ...@<sha>`, not the tag, so
 list those release SHAs in `platform_workflow_refs`. Protect the release tags with a tag ruleset.
 
-`terraform test` (Terraform >= 1.7, mock AWS provider, `command = plan`, no credentials) in [`tests/`](tests): role names within 64 characters; `sub` per role kind (main, environment, pull request); no wildcard trust; over-long service id rejected; no AWS-managed broad policy on any role and none at all on plan roles; plan-role S3 statements reference only its own key, ListBucket limited by exact prefix, no write actions except its own lock item, KMS decrypt via S3 for its own object only, no other service's resources or secrets, `*` only for Describe/List; state-bucket deny statements; duplicate state keys and AdministratorAccess in `apply_policy_arns` rejected; deploy role pulls only its own repository (optionally in `ecr_registry_account_id`) and cannot push; with `bind_platform_workflow_ref` each role trusts only its platform workflow at a release tag or SHA, and branch refs are refused.
-Run `terraform init -backend=false && terraform test` in this directory; CI runs it through
-`scripts/ci/terraform-validate-all.sh`.
+What the binding protects, per role kind (it is applied to all four):
+
+| Role | Bound workflow | What the binding guarantees | What else it relies on |
+|---|---|---|---|
+| `ecr-push` | `container-image.yml` | only the platform's build, scan and sign steps run with the credentials | `main`-branch `sub` (merged, reviewed code) |
+| `deploy` | `helm-deploy.yml` | only the platform's verify-and-deploy steps run with the credentials | environment protection rules (reviewers, deployment branches) |
+| `tf-apply` | `terraform.yml` | only the platform's Terraform steps run with the credentials | environment protection rules, because those steps run the repository's Terraform code (which can execute programs at plan and apply) from a branch the environment admits; `apply_policy_arns` and the permissions boundary |
+| `tf-plan` | `terraform.yml` | only a job calling the platform workflow can assume the role; other jobs in the pull request's workflow cannot | **its least-privilege policy**: the job runs `terraform plan` on the pull request's own configuration, and Terraform runs code at plan time (`data "external"`, third-party providers and modules), so a pull request can still run arbitrary code with tf-plan credentials. The role can only read its own state key and lock item, describe its own resources, and read values of its own secrets tagged `fintechbankx.io/value-in-state=true` |
+
