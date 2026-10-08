@@ -30,7 +30,7 @@ variable "trusted_principal_arns" {
 
 variable "kms_key_arns" {
   type        = map(string)
-  description = "Optional CMK ARN per service slug (the aurora-postgresql kms_key_arn output). Without one the statement is limited by kms:ViaService and the SecretARN encryption context only."
+  description = "Optional CMK ARN per service slug that encrypts its secrets (a secrets-only key, not the database storage key). Used for the db-import secret and to scope kms:Decrypt; without one the secret uses the AWS managed key and the statement is limited by kms:ViaService and the SecretARN encryption context only."
   default     = {}
 }
 
@@ -55,4 +55,16 @@ variable "tags" {
   type        = map(string)
   description = "Resource tags."
   default     = {}
+}
+
+variable "create_db_import_secrets" {
+  type        = bool
+  description = "Create the empty secret container <env>/<slug>/db-import per service (no value: operators fill it with put-secret-value, so it never reaches Terraform state). Set false when another stack owns the secrets."
+  default     = true
+}
+
+variable "recovery_window_in_days" {
+  type        = number
+  description = "Recovery window of the db-import secrets."
+  default     = 30
 }

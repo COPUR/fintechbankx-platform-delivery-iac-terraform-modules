@@ -97,3 +97,39 @@ run "bad_slug_rejected" {
 
   expect_failures = [var.service_slugs]
 }
+
+run "creates_empty_db_import_secret_containers" {
+  command = plan
+
+  variables {
+    kms_key_arns = { "payment-request-to-pay-service" = "arn:aws:kms:me-central-1:111122223333:key/11111111-2222-3333-4444-555555555555" }
+  }
+
+  assert {
+    condition     = aws_secretsmanager_secret.db_import["payment-request-to-pay-service"].name == "dev/payment-request-to-pay-service/db-import"
+    error_message = "Secret container <env>/<slug>/db-import per service."
+  }
+
+  assert {
+    condition     = aws_secretsmanager_secret.db_import["payment-request-to-pay-service"].kms_key_id == "arn:aws:kms:me-central-1:111122223333:key/11111111-2222-3333-4444-555555555555"
+    error_message = "Encrypted with the service's secrets key when one is given."
+  }
+
+  assert {
+    condition     = aws_secretsmanager_secret.db_import["payment-request-to-pay-service"].tags["fintechbankx.io/value-in-state"] == "false" && !contains(keys(aws_secretsmanager_secret.db_import["payment-request-to-pay-service"].tags), "fintechbankx.io/secrets")
+    error_message = "Operator-filled (value-in-state=false) and not an External Secrets source."
+  }
+}
+
+run "secret_containers_optional" {
+  command = plan
+
+  variables {
+    create_db_import_secrets = false
+  }
+
+  assert {
+    condition     = length(aws_secretsmanager_secret.db_import) == 0
+    error_message = "create_db_import_secrets=false creates no containers."
+  }
+}

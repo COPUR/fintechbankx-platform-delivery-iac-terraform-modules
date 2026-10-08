@@ -73,3 +73,19 @@ resource "aws_iam_role_policy" "access" {
   role   = aws_iam_role.this[each.key].id
   policy = data.aws_iam_policy_document.access[each.key].json
 }
+
+# Empty containers: the value is written by an operator (put-secret-value),
+# never by Terraform, so it is not in state. Not tagged fintechbankx.io/secrets:
+# External Secrets never syncs it into the cluster.
+resource "aws_secretsmanager_secret" "db_import" {
+  for_each = var.create_db_import_secrets ? toset(var.service_slugs) : toset([])
+
+  name                    = "${var.environment}/${each.key}/db-import"
+  description             = "Operator database import credential for ${each.key}; filled by an operator, read only through ${var.environment}-${each.key}-db-import"
+  kms_key_id              = lookup(var.kms_key_arns, each.key, null)
+  recovery_window_in_days = var.recovery_window_in_days
+  tags = merge(var.tags, {
+    "fintechbankx.io/service-slug"   = each.key
+    "fintechbankx.io/value-in-state" = "false"
+  })
+}
