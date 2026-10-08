@@ -1,0 +1,118 @@
+aws_region         = "me-central-1"
+environment        = "staging"
+vpc_cidr           = "10.41.0.0/16"
+az_count           = 3
+single_nat_gateway = false
+
+eks_node_groups = {
+  general = {
+    instance_types = ["m6i.xlarge", "m6a.xlarge"]
+    min_size       = 3
+    max_size       = 9
+    desired_size   = 3
+  }
+}
+
+msk_broker_count          = 3
+msk_broker_instance_type  = "kafka.m7g.large"
+msk_broker_volume_size_gb = 250
+log_retention_days        = 90
+
+eks_cluster_admin_role_arns = ["arn:aws:iam::111122223333:role/platform-admin"]
+alarm_topic_arn             = "arn:aws:sns:me-central-1:111122223333:fintechbankx-staging-platform-alarms"
+
+# Every service of the platform contract. image_name = Kubernetes service
+# account = ECR repository fintechbankx/<image_name>. Names marked in the
+# README as Proposed are not yet confirmed by the owning squads.
+github_services = {
+  "svc-ln-loan-lifecycle" = {
+    repository          = "fintechbankx-lendingpayments-loan-lifecycle-core"
+    image_name          = "loan-lifecycle-service"
+    namespace           = "lending"
+    terraform_state_key = "lending/loan-lifecycle-service/terraform.tfstate"
+  }
+  "svc-pay-initiation-settlement" = {
+    repository          = "fintechbankx-lendingpayments-payment-orchestration-initiation-settlement"
+    image_name          = "payment-initiation-settlement-service"
+    namespace           = "payments"
+    terraform_state_key = "payments/payment-initiation-settlement-service/terraform.tfstate"
+  }
+  "svc-pay-request-to-pay" = {
+    repository          = "fintechbankx-lendingpayments-payment-orchestration-request-to-pay"
+    image_name          = "payment-request-to-pay-service"
+    namespace           = "payments"
+    terraform_state_key = "payments/payment-request-to-pay-service/terraform.tfstate"
+  }
+  "svc-pay-recurring-mandates" = {
+    repository          = "fintechbankx-lendingpayments-payment-orchestration-recurring-mandates"
+    image_name          = "payment-recurring-mandates-service"
+    namespace           = "payments"
+    terraform_state_key = "payments/payment-recurring-mandates-service/terraform.tfstate"
+  }
+  "svc-pay-bulk-orchestration" = {
+    repository          = "fintechbankx-lendingpayments-payment-orchestration-bulk-orchestration"
+    image_name          = "payment-bulk-orchestration-service"
+    namespace           = "payments"
+    terraform_state_key = "payments/payment-bulk-orchestration-service/terraform.tfstate"
+  }
+  "svc-cus-profile-kyc" = {
+    repository          = "fintechbankx-customer-profile-kyc-core"
+    image_name          = "customer-profile-kyc-service"
+    namespace           = "customer"
+    terraform_state_key = "customer/customer-profile-kyc-service/terraform.tfstate"
+  }
+  "svc-rsk-decisioning" = {
+    repository          = "fintechbankx-riskcompliance-risk-decisioning-core"
+    image_name          = "risk-decisioning-service"
+    namespace           = "risk"
+    terraform_state_key = "risk/risk-decisioning-service/terraform.tfstate"
+  }
+  "svc-cmp-evidence" = {
+    repository          = "fintechbankx-riskcompliance-compliance-evidence-core"
+    image_name          = "compliance-evidence-service"
+    namespace           = "compliance"
+    terraform_state_key = "compliance/compliance-evidence-service/terraform.tfstate"
+  }
+  "svc-of-consent-authorization" = {
+    repository          = "fintechbankx-openfinance-consent-auth-service"
+    image_name          = "openfinance-consent-authorization-service"
+    namespace           = "open-finance"
+    terraform_state_key = "open-finance/openfinance-consent-authorization-service/terraform.tfstate"
+  }
+  "svc-of-payee-verification" = {
+    repository          = "fintechbankx-openfinance-payee-metadata-payee-verification"
+    image_name          = "openfinance-payee-verification-service"
+    namespace           = "open-finance"
+    terraform_state_key = "open-finance/openfinance-payee-verification-service/terraform.tfstate"
+  }
+  "svc-of-personal-financial-data" = {
+    repository          = "fintechbankx-openfinance-retail-data-personal-financial"
+    image_name          = "openfinance-personal-financial-data-service"
+    namespace           = "open-finance"
+    terraform_state_key = "open-finance/openfinance-personal-financial-data-service/terraform.tfstate"
+  }
+  "svc-of-business-financial-data" = {
+    repository          = "fintechbankx-openfinance-corporate-data-business-financial"
+    image_name          = "openfinance-business-financial-data-service"
+    namespace           = "open-finance"
+    terraform_state_key = "open-finance/openfinance-business-financial-data-service/terraform.tfstate"
+  }
+  "svc-of-banking-metadata" = {
+    repository          = "fintechbankx-openfinance-payee-metadata-banking-metadata"
+    image_name          = "openfinance-banking-metadata-service"
+    namespace           = "open-finance"
+    terraform_state_key = "open-finance/openfinance-banking-metadata-service/terraform.tfstate"
+  }
+  "svc-of-atm-directory" = {
+    repository          = "fintechbankx-openfinance-open-data-atm-directory"
+    image_name          = "openfinance-atm-directory-service"
+    namespace           = "open-finance"
+    terraform_state_key = "open-finance/openfinance-atm-directory-service/terraform.tfstate"
+  }
+  "svc-of-open-products-catalog" = {
+    repository          = "fintechbankx-openfinance-open-data-products-catalog"
+    image_name          = "openfinance-open-products-catalog-service"
+    namespace           = "open-finance"
+    terraform_state_key = "open-finance/openfinance-open-products-catalog-service/terraform.tfstate"
+  }
+}
