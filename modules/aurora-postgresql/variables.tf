@@ -175,3 +175,9 @@ variable "tags" {
   description = "Resource tags."
   default     = {}
 }
+
+variable "observability_discovery" {
+  type        = bool
+  description = "Tag resources fintechbankx.io/observability=enabled so the YACE CloudWatch exporter discovers them."
+  default     = true
+}

@@ -14,7 +14,7 @@ provider "aws" {
 }
 
 # Illustrative: svc-ln-loan-lifecycle produces evt.ln.loan.*, consumes risk
-# decisions and settled payments, and may redrive to the payments DLQ. Real
+# decisions and settled payments. Its DLQs live under its own prefix. Real
 # inputs come from topics/generated/msk-client-access.json in
 # fintechbankx-platform-event-streaming-kafka.
 module "loan_msk_access" {
@@ -24,7 +24,6 @@ module "loan_msk_access" {
   policy_name               = "dev-loan-lifecycle-service-msk"
   cluster_arn               = "arn:aws:kafka:me-central-1:111122223333:cluster/fintechbankx-dev-events/0b1c2d3e-1111-2222-3333-444455556666-3"
   produce_topic_prefixes    = ["evt.ln.loan."]
-  produce_topics            = ["evt.pay.payment.dlq.v1"]
   consume_topics            = ["evt.rsk.decision.*", "evt.pay.payment.settled.v1"]
   consumer_groups           = ["cg.svc-ln-loan-lifecycle.payment-settled.v1"]
   transactional_id_prefixes = ["svc-ln-loan-lifecycle"]

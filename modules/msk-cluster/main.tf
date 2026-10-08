@@ -9,7 +9,7 @@
 #  - broker logs in CloudWatch, Prometheus JMX/node exporters for scraping
 
 locals {
-  tags        = merge({ ManagedBy = "terraform", Module = "msk-cluster", Cluster = var.cluster_name }, var.tags)
+  tags        = merge({ ManagedBy = "terraform", Module = "msk-cluster", Cluster = var.cluster_name }, var.observability_discovery ? { "fintechbankx.io/observability" = "enabled" } : {}, var.tags)
   kms_key_arn = var.kms_key_arn != null ? var.kms_key_arn : aws_kms_key.this[0].arn
 
   server_properties = merge({

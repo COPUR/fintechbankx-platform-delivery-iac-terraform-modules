@@ -52,6 +52,7 @@ Examples: [`examples/msk-cluster`](../../examples/msk-cluster/main.tf).
 | `tags` | `map(string)` | `{}` | Resource tags. |
 | `create_topic_admin_policy` | `bool` | `true` | Create the topic-admin IAM policy for the topic provisioning job. |
 | `topic_admin_prefixes` | `list(string)` | `["evt."]` | Topic name prefixes the provisioning job may create and alter. |
+| `observability_discovery` | `bool` | `true` | Tag resources fintechbankx.io/observability=enabled so the YACE CloudWatch exporter discovers them. |
 
 ## Outputs
 

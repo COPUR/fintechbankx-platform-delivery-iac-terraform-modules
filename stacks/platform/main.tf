@@ -1,7 +1,8 @@
 # Platform composition root for one environment (one cell, one region):
 # VPC -> EKS (+ IRSA) -> MSK -> AMP (+ optional Grafana) -> ECR repositories,
-# plus the IRSA roles of the platform operators (External Secrets, OTel
-# collector). Service repos consume the outputs through their own
+# plus the IRSA roles of the platform operators (External Secrets; the
+# observability stack is in observability.tf). Service repos consume the
+# outputs through their own
 # deploy/terraform (vpc_id, private_subnet_ids, workload_security_group_id,
 # eks_oidc_provider_arn/url, msk_cluster_arn).
 
@@ -59,6 +60,7 @@ module "msk" {
   monitoring_security_group_ids = [module.eks.cluster_security_group_id]
   log_retention_days            = var.log_retention_days
   alarm_topic_arn               = var.alarm_topic_arn
+  enhanced_monitoring           = var.msk_enhanced_monitoring
   tags                          = local.tags
 }
 
@@ -87,18 +89,6 @@ module "external_secrets_irsa" {
   environment       = var.environment
   oidc_provider_arn = module.eks.oidc_provider_arn
   oidc_provider_url = module.eks.oidc_provider_url
-  tags              = local.tags
-}
-
-module "otel_collector_irsa" {
-  source = "../../modules/irsa-role"
-
-  role_name         = "${local.name}-otel-collector"
-  description       = "OTel collector / Prometheus remote write to AMP"
-  oidc_provider_arn = module.eks.oidc_provider_arn
-  oidc_provider_url = module.eks.oidc_provider_url
-  service_accounts  = [var.otel_collector_service_account]
-  policy_arns       = { amp_remote_write = module.observability.remote_write_policy_arn }
   tags              = local.tags
 }
 

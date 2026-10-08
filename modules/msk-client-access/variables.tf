@@ -36,7 +36,7 @@ variable "produce_topic_prefixes" {
 
 variable "produce_topics" {
   type        = list(string)
-  description = "Exact topics the service writes, evt.<ctx>.<aggregate>.<event>.v<major> (e.g. the DLQ evt.<ctx>.<aggregate>.dlq.v1 of a namespace it consumes)."
+  description = "Exact topics the service writes, evt.<ctx>.<aggregate>.<event>.v<major> (optional; DLQs are consumer-owned and already covered by produce_topic_prefixes)."
   default     = []
 
   validation {

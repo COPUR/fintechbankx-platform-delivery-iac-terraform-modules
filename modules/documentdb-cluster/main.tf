@@ -13,7 +13,7 @@
 
 locals {
   name        = var.name != null ? var.name : "${var.environment}-${var.service_slug}"
-  tags        = merge({ ManagedBy = "terraform", Module = "documentdb-cluster", Service = var.service_slug }, var.tags)
+  tags        = merge({ ManagedBy = "terraform", Module = "documentdb-cluster", Service = var.service_slug }, var.observability_discovery ? { "fintechbankx.io/observability" = "enabled" } : {}, var.tags)
   kms_key_arn = var.kms_key_arn != null ? var.kms_key_arn : aws_kms_key.this[0].arn
   alarm       = var.alarm_topic_arn == null ? [] : [var.alarm_topic_arn]
 }

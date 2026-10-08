@@ -24,8 +24,8 @@ eks_cluster_admin_role_arns = ["arn:aws:iam::111122223333:role/platform-break-gl
 alarm_topic_arn             = "arn:aws:sns:me-central-1:111122223333:fintechbankx-prod-platform-alarms"
 
 # Every service of the platform contract. image_name = Kubernetes service
-# account = ECR repository fintechbankx/<image_name>. Names marked in the
-# README as Proposed are not yet confirmed by the owning squads.
+# account = ECR repository fintechbankx/<image_name>. All names were
+# confirmed by the owning service threads (2026-10-08).
 github_services = {
   "svc-ln-loan-lifecycle" = {
     repository          = "fintechbankx-lendingpayments-loan-lifecycle-core"
@@ -77,44 +77,44 @@ github_services = {
   }
   "svc-of-consent-authorization" = {
     repository          = "fintechbankx-openfinance-consent-auth-service"
-    image_name          = "openfinance-consent-authorization-service"
+    image_name          = "consent-authorization-service"
     namespace           = "open-finance"
-    terraform_state_key = "open-finance/openfinance-consent-authorization-service/terraform.tfstate"
+    terraform_state_key = "open-finance/consent-authorization-service/terraform.tfstate"
   }
   "svc-of-payee-verification" = {
     repository          = "fintechbankx-openfinance-payee-metadata-payee-verification"
-    image_name          = "openfinance-payee-verification-service"
+    image_name          = "payee-verification-service"
     namespace           = "open-finance"
-    terraform_state_key = "open-finance/openfinance-payee-verification-service/terraform.tfstate"
+    terraform_state_key = "open-finance/payee-verification-service/terraform.tfstate"
   }
   "svc-of-personal-financial-data" = {
     repository          = "fintechbankx-openfinance-retail-data-personal-financial"
-    image_name          = "openfinance-personal-financial-data-service"
+    image_name          = "personal-financial-data-service"
     namespace           = "open-finance"
-    terraform_state_key = "open-finance/openfinance-personal-financial-data-service/terraform.tfstate"
+    terraform_state_key = "open-finance/personal-financial-data-service/terraform.tfstate"
   }
   "svc-of-business-financial-data" = {
     repository          = "fintechbankx-openfinance-corporate-data-business-financial"
-    image_name          = "openfinance-business-financial-data-service"
+    image_name          = "business-financial-data-service"
     namespace           = "open-finance"
-    terraform_state_key = "open-finance/openfinance-business-financial-data-service/terraform.tfstate"
+    terraform_state_key = "open-finance/business-financial-data-service/terraform.tfstate"
   }
   "svc-of-banking-metadata" = {
     repository          = "fintechbankx-openfinance-payee-metadata-banking-metadata"
-    image_name          = "openfinance-banking-metadata-service"
+    image_name          = "banking-metadata-service"
     namespace           = "open-finance"
-    terraform_state_key = "open-finance/openfinance-banking-metadata-service/terraform.tfstate"
+    terraform_state_key = "open-finance/banking-metadata-service/terraform.tfstate"
   }
   "svc-of-atm-directory" = {
     repository          = "fintechbankx-openfinance-open-data-atm-directory"
-    image_name          = "openfinance-atm-directory-service"
+    image_name          = "atm-directory-service"
     namespace           = "open-finance"
-    terraform_state_key = "open-finance/openfinance-atm-directory-service/terraform.tfstate"
+    terraform_state_key = "open-finance/atm-directory-service/terraform.tfstate"
   }
   "svc-of-open-products-catalog" = {
     repository          = "fintechbankx-openfinance-open-data-products-catalog"
-    image_name          = "openfinance-open-products-catalog-service"
+    image_name          = "open-products-catalog-service"
     namespace           = "open-finance"
-    terraform_state_key = "open-finance/openfinance-open-products-catalog-service/terraform.tfstate"
+    terraform_state_key = "open-finance/open-products-catalog-service/terraform.tfstate"
   }
 }

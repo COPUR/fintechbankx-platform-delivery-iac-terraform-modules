@@ -35,6 +35,10 @@ locals {
     }
   }
 
+  # gha-<env>-<service id without svc->-<kind>; the longest possible name is
+  # gha-staging-<38 chars>-ecr-push = 59 characters (IAM limit 64).
+  role_names = { for k, v in local.role_sets : k => "gha-${var.environment}-${trimprefix(v.id, "svc-")}-${v.kind}" }
+
   role_sets = {
     for pair in flatten([
       for id, s in var.services : [
@@ -91,7 +95,7 @@ data "aws_iam_policy_document" "trust" {
 
 resource "aws_iam_role" "this" {
   for_each             = local.role_sets
-  name                 = "${var.environment}-${var.services[each.value.id].image_name}-gha-${each.value.kind}"
+  name                 = local.role_names[each.key]
   description          = "GitHub Actions ${each.value.kind} for ${each.value.id} (${var.environment})"
   assume_role_policy   = data.aws_iam_policy_document.trust[each.key].json
   max_session_duration = 3600
@@ -100,8 +104,8 @@ resource "aws_iam_role" "this" {
 
   lifecycle {
     precondition {
-      condition     = length("${var.environment}-${var.services[each.value.id].image_name}-gha-${each.value.kind}") <= 64
-      error_message = "IAM role name exceeds 64 characters; shorten image_name."
+      condition     = length(local.role_names[each.key]) <= 64
+      error_message = "IAM role name exceeds 64 characters; shorten the service id."
     }
   }
 }

@@ -17,7 +17,7 @@ module "pfd_docdb" {
   source = "../../modules/documentdb-cluster"
 
   environment                = "dev"
-  service_slug               = "openfinance-personal-financial-data-service"
+  service_slug               = "personal-financial-data-service"
   name                       = "dev-of-personal-financial-data"
   vpc_id                     = "vpc-0123456789abcdef0"
   subnet_ids                 = ["subnet-0aaaaaaaaaaaaaaa1", "subnet-0aaaaaaaaaaaaaaa2", "subnet-0aaaaaaaaaaaaaaa3"]

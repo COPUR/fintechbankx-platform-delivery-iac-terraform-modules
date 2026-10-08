@@ -17,7 +17,7 @@ module "redis" {
   source = "../../modules/elasticache-redis"
 
   environment                = "dev"
-  service_slug               = "openfinance-banking-metadata-service"
+  service_slug               = "banking-metadata-service"
   name                       = "dev-of-banking-metadata"
   vpc_id                     = "vpc-0123456789abcdef0"
   subnet_ids                 = ["subnet-0aaaaaaaaaaaaaaa1", "subnet-0aaaaaaaaaaaaaaa2"]

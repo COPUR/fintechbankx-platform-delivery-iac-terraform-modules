@@ -159,3 +159,9 @@ variable "topic_admin_prefixes" {
     error_message = "List non-empty prefixes without wildcards."
   }
 }
+
+variable "observability_discovery" {
+  type        = bool
+  description = "Tag resources fintechbankx.io/observability=enabled so the YACE CloudWatch exporter discovers them."
+  default     = true
+}

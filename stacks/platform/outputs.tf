@@ -70,9 +70,24 @@ output "external_secrets_role_arn" {
   value       = module.external_secrets_irsa.role_arn
 }
 
-output "otel_collector_role_arn" {
-  description = "Annotate the OTel collector service account."
-  value       = module.otel_collector_irsa.role_arn
+output "observability_role_arns" {
+  description = "IRSA roles <cluster>-obs-{prometheus,otel-gateway,tempo,loki,yace} for the observability repo's service accounts."
+  value       = { for k, m in module.observability_irsa : k => m.role_arn }
+}
+
+output "observability_buckets" {
+  description = "Tempo and Loki buckets (SSE-KMS)."
+  value       = { for k, b in aws_s3_bucket.observability : k => b.bucket }
+}
+
+output "grafana_db_secret_name" {
+  description = "Grafana database credential container (filled by the DBA bootstrap with GF_DATABASE_*); null when disabled."
+  value       = var.create_grafana_database ? module.grafana_db[0].app_secret_name : null
+}
+
+output "grafana_db_endpoint" {
+  description = "Grafana database writer endpoint."
+  value       = var.create_grafana_database ? module.grafana_db[0].endpoint : null
 }
 
 output "github_oidc_role_arns" {

@@ -13,8 +13,11 @@ Composition root for one environment (one cell in one region, default `me-centra
 | [`observability-amp`](../../modules/observability-amp/README.md) | Amazon Managed Prometheus (+ optional Managed Grafana) |
 | [`ecr-repository`](../../modules/ecr-repository/README.md) | `fintechbankx/<image_name>` per service, immutable tags, scan on push |
 | [`external-secrets-irsa`](../../modules/external-secrets-irsa/README.md) | IRSA role for ClusterSecretStore `aws-secrets-manager` (reads `<env>/*`) |
-| [`irsa-role`](../../modules/irsa-role/README.md) | OTel collector remote-write role (`observability/otel-collector`) |
+| [`irsa-role`](../../modules/irsa-role/README.md) | `<cluster>-obs-{prometheus,otel-gateway,tempo,loki,yace}` roles ([observability.tf](observability.tf)) |
+| [`aurora-postgresql`](../../modules/aurora-postgresql/README.md) | Small Grafana database (staging, prod), credential container `<env>/observability/grafana-db` |
 | [`github-oidc`](../../modules/github-oidc/README.md) | GitHub Actions OIDC provider and per-service ecr-push / deploy / tf-plan / tf-apply roles |
+
+[observability.tf](observability.tf) also creates SSE-KMS buckets `fintechbankx-<env>-obs-{traces,logs-chunks,logs-ruler}` (TLS-only, public access blocked). MSK enhanced monitoring defaults to `PER_BROKER`; Aurora and MSK are tagged `fintechbankx.io/observability=enabled` for YACE.
 
 Per-service databases (Aurora, DocumentDB, Redis) are **not** here: each service owns them in its own
 `deploy/terraform` (database per service).
@@ -43,11 +46,12 @@ first; they are bootstrapped outside this stack.
 | `external_secrets_role_arn` | mesh repo: `external-secrets` service account annotation |
 | `vpc_cidr`, `private_subnet_cidrs`, `msk_security_group_id`, `msk_subnet_ids` | mesh repo `params.env` |
 | `ingress_tls_secret_name` | mesh repo: gateway certificate at Secrets Manager `<env>/platform/ingress-tls` (created and filled outside Terraform; no certificate material in this repository) |
-| `amp_remote_write_url`, `otel_collector_role_arn` | observability repo |
+| `amp_remote_write_url`, `observability_role_arns`, `observability_buckets`, `grafana_db_secret_name` | observability repo (IRSA for `observability/{prometheus,otel-gateway,tempo,loki,yace}`) |
 
 ## Image names
 
-`github_services` in the tfvars examples lists all 15 services. The image / service account names of the five
-services with deployable charts come from those charts. The other ten (`payment-request-to-pay-service`,
-`payment-recurring-mandates-service`, `payment-bulk-orchestration-service`, `openfinance-*-service`) follow the same
-`<context>-<capability>-service` pattern and are **Proposed** until the owning squads confirm them.
+`github_services` in the tfvars examples lists all 15 services. Image name = Kubernetes service account = ECR
+repository `fintechbankx/<image_name>`; the names were confirmed by the owning service threads on 2026-10-08
+(open finance services use `<capability>-service` in namespace `open-finance`, without an `openfinance-` prefix).
+CI role names are `gha-<env>-<service-id without svc->-<kind>` (at most 59 characters; enforced by a variable
+validation and a `terraform test` in `modules/github-oidc/tests`).

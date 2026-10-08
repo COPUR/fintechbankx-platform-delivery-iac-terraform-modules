@@ -1,8 +1,8 @@
 # Topic-scoped Amazon MSK IAM policy for one service (contract: SASL_SSL with
 # AWS_MSK_IAM through the service's IRSA role).
 #  - produce: the service's own evt.<ctx>.<aggregate>.* namespaces
-#    (produce_topic_prefixes) and exact topics (produce_topics, e.g. the DLQ
-#    of another namespace it consumes)
+#    (produce_topic_prefixes) and exact topics (produce_topics, optional; DLQs are
+#    consumer-owned and fall under the own prefix)
 #  - consume: only the listed topics, only with its own consumer groups
 #    cg.<service-id>.<purpose>.v<major> (consumer_groups) or the prefix
 #    cg.<service-id>. (consumer_group_prefixes)

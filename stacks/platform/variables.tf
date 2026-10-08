@@ -137,16 +137,22 @@ variable "service_repositories" {
   }
 }
 
-variable "otel_collector_service_account" {
-  type = object({
-    namespace = string
-    name      = string
-  })
-  description = "Service account of the in-cluster OTel collector that remote-writes to AMP."
-  default = {
-    namespace = "observability"
-    name      = "otel-collector"
-  }
+variable "msk_enhanced_monitoring" {
+  type        = string
+  description = "MSK CloudWatch enhanced monitoring level (the observability repo expects PER_BROKER)."
+  default     = "PER_BROKER"
+}
+
+variable "create_grafana_database" {
+  type        = bool
+  description = "Create the small Aurora PostgreSQL database for Grafana (staging, prod). dev falls back to per-pod SQLite."
+  default     = true
+}
+
+variable "observability_log_retention_days" {
+  type        = number
+  description = "Expiry for objects in the Tempo and Loki buckets (backstop; the apps enforce their own retention)."
+  default     = 400
 }
 
 variable "log_retention_days" {

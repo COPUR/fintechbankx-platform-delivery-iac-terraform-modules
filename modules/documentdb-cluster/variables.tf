@@ -10,7 +10,7 @@ variable "environment" {
 
 variable "service_slug" {
   type        = string
-  description = "Service slug / Kubernetes service account (e.g. openfinance-personal-financial-data-service)."
+  description = "Service slug / Kubernetes service account (e.g. personal-financial-data-service)."
 
   validation {
     condition     = can(regex("^[a-z][a-z0-9-]{1,62}$", var.service_slug))
@@ -139,4 +139,10 @@ variable "tags" {
   type        = map(string)
   description = "Resource tags."
   default     = {}
+}
+
+variable "observability_discovery" {
+  type        = bool
+  description = "Tag resources fintechbankx.io/observability=enabled so the YACE CloudWatch exporter discovers them."
+  default     = true
 }

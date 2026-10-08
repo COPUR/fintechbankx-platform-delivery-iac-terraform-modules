@@ -44,13 +44,13 @@ variable "services" {
 
   validation {
     condition = alltrue([for id, s in var.services :
-      can(regex("^svc-[a-z0-9]+-[a-z0-9-]+$", id)) &&
+      can(regex("^svc-[a-z0-9]+-[a-z0-9-]+$", id)) && length(id) <= 42 &&
       can(regex("^[A-Za-z0-9_.-]+$", s.repository)) &&
       can(regex("^[a-z][a-z0-9-]+$", s.image_name)) &&
       can(regex("^[a-z][a-z0-9-]+$", s.namespace)) &&
       !strcontains(s.terraform_state_key, "*")
     ])
-    error_message = "Keys must be service ids; repository, image_name and namespace must be plain names; state keys must not contain wildcards."
+    error_message = "Keys must be service ids of at most 42 characters (role name limit); repository, image_name and namespace must be plain names; state keys must not contain wildcards."
   }
 }
 

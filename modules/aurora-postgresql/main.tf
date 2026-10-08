@@ -7,7 +7,7 @@
 # Also used for the Keycloak database (no separate module).
 
 locals {
-  tags         = merge({ ManagedBy = "terraform", Module = "aurora-postgresql", Database = var.database_name }, var.tags)
+  tags         = merge({ ManagedBy = "terraform", Module = "aurora-postgresql", Database = var.database_name }, var.observability_discovery ? { "fintechbankx.io/observability" = "enabled" } : {}, var.tags)
   engine_major = split(".", var.engine_version)[0]
   kms_key_arn  = var.kms_key_arn != null ? var.kms_key_arn : aws_kms_key.this[0].arn
   alarm_action = var.alarm_topic_arn == null ? [] : [var.alarm_topic_arn]

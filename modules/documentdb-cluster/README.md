@@ -37,7 +37,7 @@ Examples: [`examples/documentdb-cluster`](../../examples/documentdb-cluster/main
 | Name | Type | Default | Description |
 |---|---|---|---|
 | `environment` | `string` | required | dev, staging or prod (secret names start with it). |
-| `service_slug` | `string` | required | Service slug / Kubernetes service account (e.g. openfinance-personal-financial-data-service). |
+| `service_slug` | `string` | required | Service slug / Kubernetes service account (e.g. personal-financial-data-service). |
 | `name` | `string` | `null` | Resource name prefix. null uses <environment>-<service_slug>. |
 | `engine_version` | `string` | `"5.0.0"` | DocumentDB engine version. |
 | `engine_major_version` | `string` | `"5.0"` | Parameter group family suffix (docdb<major>). |
@@ -54,6 +54,7 @@ Examples: [`examples/documentdb-cluster`](../../examples/documentdb-cluster/main
 | `connections_alarm_threshold` | `number` | `500` | DatabaseConnections alarm threshold. |
 | `alarm_topic_arn` | `string` | `null` | SNS topic for alarms; null disables notifications. |
 | `tags` | `map(string)` | `{}` | Resource tags. |
+| `observability_discovery` | `bool` | `true` | Tag resources fintechbankx.io/observability=enabled so the YACE CloudWatch exporter discovers them. |
 
 ## Outputs
 
