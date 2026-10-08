@@ -1,0 +1,12 @@
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+*.auto.tfvars
+environments/*.tfvars
+environments/*.backend.hcl
+!environments/*.example
+.terraform-plugin-cache/
+zz_ci_local_backend_override.tf
