@@ -80,7 +80,7 @@ variable "kms_key_arn" {
 
 variable "runtime_secret_name" {
   type        = string
-  description = "Runtime secret name. null keeps the historic <env>-<slug>/runtime. Set <env>/<slug>/runtime so the aws-secrets-manager ClusterSecretStore (reads <env>/*) can sync it."
+  description = "Runtime secret name. null (default) uses the contract name <env>/<slug>/runtime, which the aws-secrets-manager ClusterSecretStore (reads <env>/*) can sync. Set <env>-<slug>/runtime to keep a secret created before 2026-10-08."
   default     = null
 }
 

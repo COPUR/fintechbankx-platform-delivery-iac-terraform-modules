@@ -13,6 +13,9 @@ mock_provider "aws" {
   mock_data "aws_iam_policy_document" {
     defaults = { json = "{\"Version\":\"2012-10-17\",\"Statement\":[]}" }
   }
+  mock_resource "aws_iam_policy" {
+    defaults = { arn = "arn:aws:iam::111122223333:policy/mock-runtime-access" }
+  }
 }
 
 mock_provider "random" {}
@@ -41,8 +44,13 @@ run "default_prefix_keeps_legacy_names" {
   }
 
   assert {
-    condition     = aws_secretsmanager_secret.service_runtime.name == "dev-loan-lifecycle-service/runtime"
-    error_message = "Default runtime secret name changed."
+    condition     = aws_secretsmanager_secret.service_runtime.name == "dev/loan-lifecycle-service/runtime"
+    error_message = "Default runtime secret must be <env>/<slug>/runtime (contract: secrets under <env>/*, readable by the aws-secrets-manager ClusterSecretStore)."
+  }
+
+  assert {
+    condition     = startswith(aws_secretsmanager_secret.service_runtime.name, "${var.environment}/")
+    error_message = "Runtime secret must live under the <env>/ prefix the External Secrets role may read."
   }
 
   assert {
@@ -103,4 +111,34 @@ run "irsa_without_namespace_fails" {
   }
 
   expect_failures = [aws_iam_role.workload]
+}
+
+run "runtime_secret_name_override_keeps_legacy_name" {
+  command = plan
+
+  variables {
+    runtime_secret_name = "dev-loan-lifecycle-service/runtime"
+  }
+
+  assert {
+    condition     = aws_secretsmanager_secret.service_runtime.name == "dev-loan-lifecycle-service/runtime"
+    error_message = "runtime_secret_name must override the default (callers pinning the historic secret)."
+  }
+}
+
+# The secret value must be a pure function of its inputs. With timestamp() in
+# secret_string the value is unknown at plan and differs on every apply, so
+# this exact comparison fails.
+run "runtime_secret_value_is_stable" {
+  command = apply
+
+  override_resource {
+    target = random_password.bootstrap_secret
+    values = { result = "mock-bootstrap-token" }
+  }
+
+  assert {
+    condition     = aws_secretsmanager_secret_version.service_runtime.secret_string == jsonencode({ token = "mock-bootstrap-token" })
+    error_message = "Runtime secret value must not contain time-dependent fields (no timestamp())."
+  }
 }

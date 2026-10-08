@@ -73,7 +73,7 @@ resource "random_password" "bootstrap_secret" {
 }
 
 resource "aws_secretsmanager_secret" "service_runtime" {
-  name                    = var.runtime_secret_name != null ? var.runtime_secret_name : "${local.name_prefix}/runtime"
+  name                    = var.runtime_secret_name != null ? var.runtime_secret_name : "${var.environment}/${var.service_slug}/runtime"
   description             = "Runtime bootstrap secret for ${var.service_name}"
   kms_key_id              = var.kms_key_arn
   recovery_window_in_days = var.secret_recovery_window_in_days
@@ -82,13 +82,12 @@ resource "aws_secretsmanager_secret" "service_runtime" {
 
 resource "aws_secretsmanager_secret_version" "service_runtime" {
   secret_id = aws_secretsmanager_secret.service_runtime.id
+  # Deterministic value (no timestamp()): Terraform sets it once. Rotation is
+  # owned by Secrets Manager, so later value changes are not Terraform drift.
   secret_string = jsonencode({
-    generated_at = timestamp()
-    token        = random_password.bootstrap_secret.result
+    token = random_password.bootstrap_secret.result
   })
 
-  # timestamp() is evaluated on every plan; without this the version would be
-  # replaced on each apply. Rotation is owned by Secrets Manager, not Terraform.
   lifecycle {
     ignore_changes = [secret_string]
   }
