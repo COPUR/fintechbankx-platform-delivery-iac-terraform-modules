@@ -293,3 +293,23 @@ run "deploy_role_pulls_from_registry_account" {
     error_message = "With ecr_registry_account_id the deploy role pulls from that account's repository."
   }
 }
+
+run "plan_role_cannot_read_operator_filled_secrets" {
+  command = plan
+
+  # db-app, db-migration and oidc-client are filled by a DBA or a script, so
+  # their values are not in state; a pull request must not read them. Only
+  # secrets whose value Terraform itself wrote (tagged
+  # fintechbankx.io/value-in-state=true) may be read, to refresh them.
+  assert {
+    condition = alltrue([
+      for st in data.aws_iam_policy_document.plan_read["svc-ln-loan-lifecycle/tf-plan"].statement :
+      length([for c in st.condition : c if c.variable == "secretsmanager:ResourceTag/fintechbankx.io/value-in-state" && c.test == "StringEquals" && toset(c.values) == toset(["true"])]) == 1
+      if contains(st.actions, "secretsmanager:GetSecretValue")
+      ]) && length([
+      for st in data.aws_iam_policy_document.plan_read["svc-ln-loan-lifecycle/tf-plan"].statement : st
+      if contains(st.actions, "secretsmanager:GetSecretValue")
+    ]) == 1
+    error_message = "GetSecretValue on the plan role must be limited to secrets tagged fintechbankx.io/value-in-state=true."
+  }
+}

@@ -77,7 +77,8 @@ resource "aws_secretsmanager_secret" "service_runtime" {
   description             = "Runtime bootstrap secret for ${var.service_name}"
   kms_key_id              = var.kms_key_arn
   recovery_window_in_days = var.secret_recovery_window_in_days
-  tags                    = local.common_tags
+  # Terraform writes this value, so the tf-plan role may refresh it (github-oidc).
+  tags = merge(local.common_tags, { "fintechbankx.io/value-in-state" = "true" })
 }
 
 resource "aws_secretsmanager_secret_version" "service_runtime" {

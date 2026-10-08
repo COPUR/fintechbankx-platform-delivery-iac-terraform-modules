@@ -92,7 +92,8 @@ resource "aws_secretsmanager_secret" "master" {
   description             = "DocumentDB admin credential for ${local.name} (DBA bootstrap only)"
   kms_key_id              = local.kms_key_arn
   recovery_window_in_days = 7
-  tags                    = local.tags
+  # Terraform writes this value, so the tf-plan role may refresh it (github-oidc).
+  tags = merge(local.tags, { "fintechbankx.io/value-in-state" = "true" })
 }
 
 resource "aws_secretsmanager_secret_version" "master" {

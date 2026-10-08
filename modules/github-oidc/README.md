@@ -94,7 +94,7 @@ per-key state scoping, and log reads). It gets:
 | `plan-read-own-resources` | Describe/Get/List on the service's own Aurora/DocumentDB, ElastiCache, KMS keys (by alias `alias/<prefix>-*`), Secrets Manager `<env>/<image_name>/*` and `<prefix>/*`, IAM roles/policies `<prefix>-*`, log group tags, SSM `/*/<env>/<image_name>/*`, alarm tags; a `*` statement with only Describe/List calls AWS cannot scope (security groups, subnets, VPCs, engine versions, alias list, alarm and log group lists) |
 
 `<prefix>` is `<env>-<image_name>` (the name the module library gives a service's resources) unless
-`resource_name_prefix` is set. `GetSecretValue` on the service's own secrets is needed to refresh
+`resource_name_prefix` is set. `GetSecretValue` is limited to the service's own secrets tagged `fintechbankx.io/value-in-state=true` (values Terraform wrote, already in state; set by microservice-base, documentdb-cluster and elasticache-redis); operator-filled secrets such as db-app, db-migration and oidc-client are never readable. It is needed to refresh
 `aws_secretsmanager_secret_version`; those values are in its own state already. A service whose stack manages
 other resource types gets `AccessDenied` on plan: extend this policy here (scoped), never attach a broad policy.
 

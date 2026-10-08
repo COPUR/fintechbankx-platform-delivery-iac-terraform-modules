@@ -142,3 +142,12 @@ run "runtime_secret_value_is_stable" {
     error_message = "Runtime secret value must not contain time-dependent fields (no timestamp())."
   }
 }
+
+run "runtime_secret_marked_value_in_state" {
+  command = plan
+
+  assert {
+    condition     = aws_secretsmanager_secret.service_runtime.tags["fintechbankx.io/value-in-state"] == "true"
+    error_message = "Terraform writes the runtime secret's value, so the plan role may refresh it (tag fintechbankx.io/value-in-state=true)."
+  }
+}

@@ -396,20 +396,35 @@ data "aws_iam_policy_document" "plan_read" {
     }
   }
 
-  # Refreshing aws_secretsmanager_secret_version reads the value. These are
-  # the service's own secrets, whose values are already in its own state.
   statement {
     sid = "OwnSecrets"
     actions = [
       "secretsmanager:DescribeSecret",
       "secretsmanager:GetResourcePolicy",
-      "secretsmanager:GetSecretValue",
       "secretsmanager:ListSecretVersionIds",
     ]
     resources = [
       "arn:${local.partition}:secretsmanager:${local.region}:${local.account_id}:secret:${var.environment}/${var.services[each.value.id].image_name}/*",
       "arn:${local.partition}:secretsmanager:${local.region}:${local.account_id}:secret:${local.service_prefix[each.value.id]}/*",
     ]
+  }
+
+  # Refreshing aws_secretsmanager_secret_version reads the value. Only secrets
+  # whose value Terraform itself wrote (and so already holds in state) carry
+  # fintechbankx.io/value-in-state=true. Operator-filled secrets (db-app,
+  # db-migration, oidc-client) are never readable from a pull request.
+  statement {
+    sid     = "OwnTerraformWrittenSecretValues"
+    actions = ["secretsmanager:GetSecretValue"]
+    resources = [
+      "arn:${local.partition}:secretsmanager:${local.region}:${local.account_id}:secret:${var.environment}/${var.services[each.value.id].image_name}/*",
+      "arn:${local.partition}:secretsmanager:${local.region}:${local.account_id}:secret:${local.service_prefix[each.value.id]}/*",
+    ]
+    condition {
+      test     = "StringEquals"
+      variable = "secretsmanager:ResourceTag/fintechbankx.io/value-in-state"
+      values   = ["true"]
+    }
   }
 
   statement {
