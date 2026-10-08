@@ -7,7 +7,9 @@ fintechbankx-platform-delivery-iac-cicd-templates
 (docs/delivery/CONSUMING_DELIVERY_WORKFLOWS.md section 4). Per service:
 - ecr-push  : sub repo:<org>/<repo>:ref:refs/heads/main; push/pull on
 fintechbankx/<image_name> only
-- deploy    : sub repo:<org>/<repo>:environment:<env>; eks:DescribeCluster
+- deploy    : sub repo:<org>/<repo>:environment:<env>; eks:DescribeCluster,
+ecr:GetAuthorizationToken and pull (BatchGetImage, GetDownloadUrlForLayer) of
+fintechbankx/<image_name> only, for the cosign verify step
 plus an EKS access entry in Kubernetes group
 fintechbankx:deploy:<namespace> (bind that group to a
 namespaced Role with a RoleBinding; never cluster-admin)
@@ -45,6 +47,7 @@ Examples: [`examples/github-oidc`](../../examples/github-oidc/main.tf).
 | `oidc_thumbprints` | `list(string)` | `["6938fd4d98bab03faadb97b34396831e3780aea1", "1c58a3a8518e8759bf075b76b750d4f2df264fcd"]` | Thumbprints for the GitHub OIDC provider. AWS validates GitHub tokens against its own trust store; the values are still required by the API. |
 | `services` | `map(...)` | `{}` | Service id -> GitHub repository, image name (= Kubernetes service account and service slug), context namespace, Terraform state key (unique per service; IAM tag value characters) and optional `resource_name_prefix` (default `<env>-<image_name>`). |
 | `create_ecr_push_roles` | `bool` | `true` | Create ECR push roles in this account (the account that holds the ECR repositories). |
+| `ecr_registry_account_id` | `string` | `null` | Account holding the fintechbankx/* ECR repositories the deploy roles pull from (cosign verify). null = this account. A cross-account registry also needs a repository policy allowing these roles. |
 | `eks_cluster_name` | `string` | required | EKS cluster the deploy roles target. |
 | `create_eks_access_entries` | `bool` | `true` | Create EKS access entries mapping deploy roles to fintechbankx:deploy:<namespace>. |
 | `terraform_state_bucket` | `string` | required | S3 state bucket of this environment. |
@@ -104,6 +107,6 @@ Role names: `gha-<env>-<service id without svc->-<kind>`, at most 59 characters 
 
 ## Tests
 
-`terraform test` (Terraform >= 1.7, mock AWS provider, `command = plan`, no credentials) in [`tests/`](tests): role names within 64 characters; `sub` per role kind (main, environment, pull request); no wildcard trust; over-long service id rejected; no AWS-managed broad policy on any role and none at all on plan roles; plan-role S3 statements reference only its own key, ListBucket limited by exact prefix, no write actions except its own lock item, KMS decrypt via S3 for its own object only, no other service's resources or secrets, `*` only for Describe/List; state-bucket deny statements; duplicate state keys and AdministratorAccess in `apply_policy_arns` rejected.
+`terraform test` (Terraform >= 1.7, mock AWS provider, `command = plan`, no credentials) in [`tests/`](tests): role names within 64 characters; `sub` per role kind (main, environment, pull request); no wildcard trust; over-long service id rejected; no AWS-managed broad policy on any role and none at all on plan roles; plan-role S3 statements reference only its own key, ListBucket limited by exact prefix, no write actions except its own lock item, KMS decrypt via S3 for its own object only, no other service's resources or secrets, `*` only for Describe/List; state-bucket deny statements; duplicate state keys and AdministratorAccess in `apply_policy_arns` rejected; deploy role pulls only its own repository (optionally in `ecr_registry_account_id`) and cannot push.
 Run `terraform init -backend=false && terraform test` in this directory; CI runs it through
 `scripts/ci/terraform-validate-all.sh`.

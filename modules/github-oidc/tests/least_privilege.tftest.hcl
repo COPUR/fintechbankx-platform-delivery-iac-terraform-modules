@@ -245,3 +245,51 @@ run "broad_managed_policy_rejected_for_apply" {
 
   expect_failures = [var.apply_policy_arns]
 }
+
+# The deploy role (helm-deploy) verifies the image signature with cosign, so
+# it may pull its own service image and signature, nothing else, and not push.
+run "deploy_role_reads_own_image_for_cosign" {
+  command = plan
+
+  assert {
+    condition = anytrue([
+      for st in data.aws_iam_policy_document.deploy["svc-ln-loan-lifecycle/deploy"].statement :
+      toset(st.actions) == toset(["ecr:GetAuthorizationToken"]) && toset(st.resources) == toset(["*"])
+    ])
+    error_message = "Deploy role needs ecr:GetAuthorizationToken."
+  }
+
+  assert {
+    condition = anytrue([
+      for st in data.aws_iam_policy_document.deploy["svc-ln-loan-lifecycle/deploy"].statement :
+      toset(st.actions) == toset(["ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer"]) &&
+      toset(st.resources) == toset(["arn:aws:ecr:me-central-1:111122223333:repository/fintechbankx/loan-lifecycle-service"])
+    ])
+    error_message = "Deploy role may pull only its own service repository."
+  }
+
+  assert {
+    condition = alltrue(flatten([
+      for st in data.aws_iam_policy_document.deploy["svc-ln-loan-lifecycle/deploy"].statement : [
+        for a in st.actions : !contains(["ecr:PutImage", "ecr:InitiateLayerUpload", "ecr:UploadLayerPart", "ecr:CompleteLayerUpload", "ecr:BatchDeleteImage"], a)
+      ]
+    ]))
+    error_message = "Deploy role must not push or delete images."
+  }
+}
+
+run "deploy_role_pulls_from_registry_account" {
+  command = plan
+
+  variables {
+    ecr_registry_account_id = "444455556666"
+  }
+
+  assert {
+    condition = anytrue([
+      for st in data.aws_iam_policy_document.deploy["svc-pay-initiation-settlement/deploy"].statement :
+      toset(st.resources) == toset(["arn:aws:ecr:me-central-1:444455556666:repository/fintechbankx/payment-initiation-settlement-service"])
+    ])
+    error_message = "With ecr_registry_account_id the deploy role pulls from that account's repository."
+  }
+}

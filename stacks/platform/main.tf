@@ -102,6 +102,7 @@ module "github_oidc" {
   oidc_provider_arn           = var.github_oidc_provider_arn
   services                    = var.github_services
   create_ecr_push_roles       = var.create_ecr_repositories
+  ecr_registry_account_id     = var.ecr_registry_account_id
   eks_cluster_name            = module.eks.cluster_name
   terraform_state_bucket      = coalesce(var.terraform_state_bucket, "${var.name_prefix}-terraform-state-${var.environment}")
   terraform_lock_table        = var.terraform_lock_table

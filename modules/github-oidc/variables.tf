@@ -69,6 +69,17 @@ variable "create_ecr_push_roles" {
   default     = true
 }
 
+variable "ecr_registry_account_id" {
+  type        = string
+  description = "Account holding the fintechbankx/* ECR repositories the deploy roles pull from (cosign verify). null = this account. A cross-account registry also needs a repository policy allowing these roles."
+  default     = null
+
+  validation {
+    condition     = var.ecr_registry_account_id == null || can(regex("^[0-9]{12}$", coalesce(var.ecr_registry_account_id, "000000000000")))
+    error_message = "ecr_registry_account_id must be a 12-digit account id."
+  }
+}
+
 variable "eks_cluster_name" {
   type        = string
   description = "EKS cluster the deploy roles target."

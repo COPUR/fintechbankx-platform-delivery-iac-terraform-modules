@@ -198,6 +198,12 @@ variable "github_services" {
   default     = {}
 }
 
+variable "ecr_registry_account_id" {
+  type        = string
+  description = "Account holding the fintechbankx/* ECR repositories when this account does not (create_ecr_repositories = false); deploy roles pull from it for cosign verify. null = this account."
+  default     = null
+}
+
 variable "terraform_state_bucket" {
   type        = string
   description = "State bucket; null uses <name_prefix>-terraform-state-<environment>."

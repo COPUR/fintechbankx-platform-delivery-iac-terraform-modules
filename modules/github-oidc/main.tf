@@ -3,7 +3,8 @@
 # (docs/delivery/CONSUMING_DELIVERY_WORKFLOWS.md section 4). Per service:
 #  - ecr-push  : sub repo:<org>/<repo>:ref:refs/heads/main; push/pull on
 #                fintechbankx/<image_name> only
-#  - deploy    : sub repo:<org>/<repo>:environment:<env>; eks:DescribeCluster
+#  - deploy    : sub repo:<org>/<repo>:environment:<env>; eks:DescribeCluster,
+#                pull of fintechbankx/<image_name> (cosign verify)
 #                plus an EKS access entry in Kubernetes group
 #                fintechbankx:deploy:<namespace> (bind that group to a
 #                namespaced Role with a RoleBinding; never cluster-admin)
@@ -175,17 +176,34 @@ resource "aws_iam_role_policy" "ecr_push" {
 # --- EKS deploy ---------------------------------------------------------------
 
 data "aws_iam_policy_document" "deploy" {
+  for_each = { for k, v in local.role_sets : k => v if v.kind == "deploy" }
+
   statement {
+    sid       = "DescribeCluster"
     actions   = ["eks:DescribeCluster"]
     resources = ["arn:${local.partition}:eks:${local.region}:${local.account_id}:cluster/${var.eks_cluster_name}"]
+  }
+
+  # cosign verify before helm upgrade: pull the service's own image manifest
+  # and its signature (same repository); no push.
+  statement {
+    sid       = "EcrLogin"
+    actions   = ["ecr:GetAuthorizationToken"]
+    resources = ["*"]
+  }
+
+  statement {
+    sid       = "PullOwnImageAndSignature"
+    actions   = ["ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer"]
+    resources = ["arn:${local.partition}:ecr:${local.region}:${coalesce(var.ecr_registry_account_id, local.account_id)}:repository/fintechbankx/${var.services[each.value.id].image_name}"]
   }
 }
 
 resource "aws_iam_role_policy" "deploy" {
-  for_each = { for k, v in local.role_sets : k => v if v.kind == "deploy" }
+  for_each = data.aws_iam_policy_document.deploy
   name     = "eks-describe"
   role     = aws_iam_role.this[each.key].id
-  policy   = data.aws_iam_policy_document.deploy.json
+  policy   = each.value.json
 }
 
 resource "aws_eks_access_entry" "deploy" {
