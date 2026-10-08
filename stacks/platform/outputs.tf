@@ -70,6 +70,11 @@ output "external_secrets_role_arn" {
   value       = module.external_secrets_irsa.role_arn
 }
 
+output "platform_secrets_role_arn" {
+  description = "Annotate SA external-secrets/external-secrets-platform (ClusterSecretStore aws-secrets-manager-platform); mesh overlay parameter PLATFORM_SECRETS_ROLE_ARN."
+  value       = module.external_secrets_irsa.platform_secrets_role_arn
+}
+
 output "observability_role_arns" {
   description = "IRSA roles <cluster>-obs-{prometheus,otel-gateway,tempo,loki,yace} for the observability repo's service accounts."
   value       = { for k, m in module.observability_irsa : k => m.role_arn }

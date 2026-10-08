@@ -46,7 +46,8 @@ state key (see [`modules/github-oidc`](../../modules/github-oidc/README.md)).
 | `ecr_repository_urls`, `github_oidc_role_arns` | service repos' GitHub variables (`ECR_PUSH_ROLE_ARN`, `EKS_DEPLOY_ROLE_ARN_<ENV>`) |
 | `deploy_kubernetes_groups` | mesh repo: RoleBinding per namespace |
 | `terraform_state_bucket_policy_json` | state bucket bootstrap (per environment) |
-| `external_secrets_role_arn` | mesh repo: `external-secrets` service account annotation |
+| `external_secrets_role_arn` | mesh repo: `external-secrets` service account annotation (ClusterSecretStore `aws-secrets-manager`) |
+| `platform_secrets_role_arn` | mesh repo: `external-secrets-platform` service account annotation, overlay parameter `PLATFORM_SECRETS_ROLE_ARN` (ClusterSecretStore `aws-secrets-manager-platform`) |
 | `vpc_cidr`, `private_subnet_cidrs`, `msk_security_group_id`, `msk_subnet_ids` | mesh repo `params.env` |
 | `ingress_tls_secret_name` | mesh repo: gateway certificate at Secrets Manager `<env>/platform/ingress-tls` (created and filled outside Terraform; no certificate material in this repository) |
 | `amp_remote_write_url`, `observability_role_arns`, `observability_buckets`, `grafana_db_secret_name` | observability repo (IRSA for `observability/{prometheus,otel-gateway,tempo,loki,yace}`) |

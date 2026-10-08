@@ -25,3 +25,7 @@ module "external_secrets" {
 output "role_arn" {
   value = module.external_secrets.role_arn
 }
+
+output "platform_secrets_role_arn" {
+  value = module.external_secrets.platform_secrets_role_arn
+}
