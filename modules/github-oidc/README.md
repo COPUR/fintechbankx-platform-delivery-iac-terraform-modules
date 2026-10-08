@@ -48,6 +48,9 @@ Examples: [`examples/github-oidc`](../../examples/github-oidc/main.tf).
 | `services` | `map(...)` | `{}` | Service id -> GitHub repository, image name (= Kubernetes service account and service slug), context namespace, Terraform state key (unique per service; IAM tag value characters) and optional `resource_name_prefix` (default `<env>-<image_name>`). |
 | `create_ecr_push_roles` | `bool` | `true` | Create ECR push roles in this account (the account that holds the ECR repositories). |
 | `ecr_registry_account_id` | `string` | `null` | Account holding the fintechbankx/* ECR repositories the deploy roles pull from (cosign verify). null = this account. A cross-account registry also needs a repository policy allowing these roles. |
+| `bind_platform_workflow_ref` | `bool` | `false` | Trust every CI role only from the platform's own reusable workflow (ecr-push `container-image.yml`, deploy `helm-deploy.yml`, tf-plan and tf-apply `terraform.yml`) at `platform_workflow_refs`. See "Binding the reusable workflow". |
+| `platform_workflows_repository` | `string` | `fintechbankx-platform-delivery-iac-cicd-templates` | Repository holding the reusable workflows. |
+| `platform_workflow_refs` | `list(string)` | `["refs/tags/v*"]` | Release tags or 40-character release SHAs; branches are refused. |
 | `eks_cluster_name` | `string` | required | EKS cluster the deploy roles target. |
 | `create_eks_access_entries` | `bool` | `true` | Create EKS access entries mapping deploy roles to fintechbankx:deploy:<namespace>. |
 | `terraform_state_bucket` | `string` | required | S3 state bucket of this environment. |
@@ -107,6 +110,22 @@ Role names: `gha-<env>-<service id without svc->-<kind>`, at most 59 characters 
 
 ## Tests
 
-`terraform test` (Terraform >= 1.7, mock AWS provider, `command = plan`, no credentials) in [`tests/`](tests): role names within 64 characters; `sub` per role kind (main, environment, pull request); no wildcard trust; over-long service id rejected; no AWS-managed broad policy on any role and none at all on plan roles; plan-role S3 statements reference only its own key, ListBucket limited by exact prefix, no write actions except its own lock item, KMS decrypt via S3 for its own object only, no other service's resources or secrets, `*` only for Describe/List; state-bucket deny statements; duplicate state keys and AdministratorAccess in `apply_policy_arns` rejected; deploy role pulls only its own repository (optionally in `ecr_registry_account_id`) and cannot push.
+## Binding the reusable workflow
+
+Without the binding, a deploy role trusts any job in the service repository's environment, so a caller can run a
+modified copy of `helm-deploy.yml` with it. With `bind_platform_workflow_ref = true` the `sub` condition becomes
+`<subject>:job_workflow_ref:<org>/<platform repo>/.github/workflows/<file>@<ref>` (StringLike), so only the platform's
+own workflow at a release ref can assume the role. Turn it on together with the repository's OIDC subject template,
+because the customized `sub` applies to every job in that repository:
+
+```
+PUT /repos/<org>/<repo>/actions/oidc/customization/sub
+{"use_default": false, "include_claim_keys": ["repo", "context", "job_workflow_ref"]}
+```
+
+A caller pinning the workflows by SHA (`@<sha> # v1.0.0`) presents `job_workflow_ref ...@<sha>`, not the tag, so
+list those release SHAs in `platform_workflow_refs`. Protect the release tags with a tag ruleset.
+
+`terraform test` (Terraform >= 1.7, mock AWS provider, `command = plan`, no credentials) in [`tests/`](tests): role names within 64 characters; `sub` per role kind (main, environment, pull request); no wildcard trust; over-long service id rejected; no AWS-managed broad policy on any role and none at all on plan roles; plan-role S3 statements reference only its own key, ListBucket limited by exact prefix, no write actions except its own lock item, KMS decrypt via S3 for its own object only, no other service's resources or secrets, `*` only for Describe/List; state-bucket deny statements; duplicate state keys and AdministratorAccess in `apply_policy_arns` rejected; deploy role pulls only its own repository (optionally in `ecr_registry_account_id`) and cannot push; with `bind_platform_workflow_ref` each role trusts only its platform workflow at a release tag or SHA, and branch refs are refused.
 Run `terraform init -backend=false && terraform test` in this directory; CI runs it through
 `scripts/ci/terraform-validate-all.sh`.

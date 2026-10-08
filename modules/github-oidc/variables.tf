@@ -148,3 +148,26 @@ variable "tags" {
   description = "Resource tags."
   default     = {}
 }
+
+variable "bind_platform_workflow_ref" {
+  type        = bool
+  description = "Trust each CI role only from the platform's own reusable workflow (ecr-push: container-image.yml, deploy: helm-deploy.yml, tf-plan/tf-apply: terraform.yml) at platform_workflow_refs. Needs every service repository's OIDC sub claim customized to include job_workflow_ref (include_claim_keys [\"repo\", \"context\", \"job_workflow_ref\"]); set both together, since the customized sub applies to every job in the repository."
+  default     = false
+}
+
+variable "platform_workflows_repository" {
+  type        = string
+  description = "Repository (without owner) holding the reusable delivery workflows."
+  default     = "fintechbankx-platform-delivery-iac-cicd-templates"
+}
+
+variable "platform_workflow_refs" {
+  type        = list(string)
+  description = "Refs of the platform workflows the CI roles trust when bind_platform_workflow_ref is on: release tags (refs/tags/v*) or the 40-character release SHAs callers pin to. Branches are refused."
+  default     = ["refs/tags/v*"]
+
+  validation {
+    condition     = length(var.platform_workflow_refs) > 0 && alltrue([for r in var.platform_workflow_refs : can(regex("^(refs/tags/[A-Za-z0-9._*-]+|[0-9a-f]{40})$", r))])
+    error_message = "platform_workflow_refs may hold only release tags (refs/tags/...) or 40-character commit SHAs, never a branch."
+  }
+}

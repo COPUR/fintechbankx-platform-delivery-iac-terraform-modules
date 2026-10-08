@@ -233,3 +233,15 @@ variable "ci_permissions_boundary_arn" {
   description = "Permissions boundary applied to every CI role."
   default     = null
 }
+
+variable "bind_platform_workflow_ref" {
+  type        = bool
+  description = "Passed to github-oidc: trust CI roles only from the platform's reusable workflows at platform_workflow_refs. Turn on together with the job_workflow_ref sub-claim customization in every service repository."
+  default     = false
+}
+
+variable "platform_workflow_refs" {
+  type        = list(string)
+  description = "Passed to github-oidc: release tags (refs/tags/...) or 40-character release SHAs of the platform workflows."
+  default     = ["refs/tags/v*"]
+}

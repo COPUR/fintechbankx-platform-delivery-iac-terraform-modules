@@ -59,6 +59,26 @@ locals {
     ]) : pair.key => pair
   }
 
+  # Reusable workflow each CI role kind may run as (bind_platform_workflow_ref).
+  platform_workflow = {
+    "ecr-push" = "container-image.yml"
+    "deploy"   = "helm-deploy.yml"
+    "tf-plan"  = "terraform.yml"
+    "tf-apply" = "terraform.yml"
+  }
+
+  # Allowed sub values per role. With the binding on, each subject gets the
+  # job_workflow_ref suffix GitHub appends when the repository's sub template
+  # includes it: <subject>:job_workflow_ref:<org>/<repo>/.github/workflows/<file>@<ref>.
+  trusted_sub_values = {
+    for k, v in local.role_sets : k => var.bind_platform_workflow_ref ? flatten([
+      for s in local.trusted_subjects[v.kind] : [
+        for ref in var.platform_workflow_refs :
+        "${local.subjects[v.id][s]}:job_workflow_ref:${var.github_org}/${var.platform_workflows_repository}/.github/workflows/${local.platform_workflow[v.kind]}@${ref}"
+      ]
+    ]) : [for s in local.trusted_subjects[v.kind] : local.subjects[v.id][s]]
+  }
+
   trusted_subjects = {
     "ecr-push" = ["main"]
     "deploy"   = ["environment"]
@@ -112,9 +132,10 @@ data "aws_iam_policy_document" "trust" {
       values   = ["sts.amazonaws.com"]
     }
     condition {
-      test     = "StringEquals"
+      # StringLike only for tag patterns such as refs/tags/v*.
+      test     = var.bind_platform_workflow_ref ? "StringLike" : "StringEquals"
       variable = "${local.issuer}:sub"
-      values   = [for s in local.trusted_subjects[each.value.kind] : local.subjects[each.value.id][s]]
+      values   = local.trusted_sub_values[each.key]
     }
   }
 }
