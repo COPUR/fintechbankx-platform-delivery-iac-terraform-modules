@@ -36,5 +36,5 @@ jobs:
           key: terraform-plugins-${{ runner.os }}-${{ hashFiles('**/versions.tf', '**/main.tf') }}
           restore-keys: terraform-plugins-${{ runner.os }}-
 
-      - name: fmt, validate every module/example/stack, type-check tfvars examples
+      - name: fmt, validate every root, terraform test (mock providers), type-check tfvars examples
         run: bash scripts/ci/terraform-validate-all.sh

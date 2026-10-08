@@ -42,3 +42,9 @@ Examples: [`examples/irsa-role`](../../examples/irsa-role/main.tf).
 |---|---|
 | `role_arn` | Role ARN for the service account annotation eks.amazonaws.com/role-arn (Helm serviceAccount.roleArn). |
 | `role_name` | Role name. |
+
+## Tests
+
+`terraform test` (Terraform >= 1.7, mock AWS provider, `command = plan`, no credentials) in [`tests/`](tests): exact `sub` and `aud`; wildcard service account rejected.
+Run `terraform init -backend=false && terraform test` in this directory; CI runs it through
+`scripts/ci/terraform-validate-all.sh`.

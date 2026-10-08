@@ -70,3 +70,11 @@ Role and RoleBinding belong to the mesh/Kubernetes platform repository. Never bi
 
 The `tf-apply` roles get only state access by default; pass `apply_policy_arns` (and preferably
 `permissions_boundary_arn`) for what service Terraform creates.
+
+Role names: `gha-<env>-<service id without svc->-<kind>`, at most 59 characters (service ids are limited to 42).
+
+## Tests
+
+`terraform test` (Terraform >= 1.7, mock AWS provider, `command = plan`, no credentials) in [`tests/`](tests): role names within 64 characters; `sub` per role kind (main, environment, pull request); no wildcard trust; over-long service id rejected.
+Run `terraform init -backend=false && terraform test` in this directory; CI runs it through
+`scripts/ci/terraform-validate-all.sh`.

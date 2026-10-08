@@ -54,6 +54,7 @@ Examples: [`examples/aurora-postgresql`](../../examples/aurora-postgresql/main.t
 | `acu_alarm_threshold_percent` | `number` | `85` | ACUUtilization alarm threshold. |
 | `connections_alarm_threshold` | `number` | `100` | DatabaseConnections alarm threshold. |
 | `tags` | `map(string)` | `{}` | Resource tags. |
+| `observability_discovery` | `bool` | `true` | Tag resources fintechbankx.io/observability=enabled so the YACE CloudWatch exporter discovers them. |
 
 ## Outputs
 
@@ -71,3 +72,9 @@ Examples: [`examples/aurora-postgresql`](../../examples/aurora-postgresql/main.t
 | `app_secret_arn` | Application credential secret ARN. |
 | `app_secret_name` | Application credential secret name (Helm value externalSecret.remoteSecretName). |
 | `master_user_secret_arn` | RDS-managed admin credential, for the DBA bootstrap only. |
+
+## Tests
+
+`terraform test` (Terraform >= 1.7, mock AWS provider, `command = plan`, no credentials) in [`tests/`](tests): `rds.force_ssl=1`, storage encrypted, deletion protection on, rotating CMK, observability tag; reserved user rejected.
+Run `terraform init -backend=false && terraform test` in this directory; CI runs it through
+`scripts/ci/terraform-validate-all.sh`.

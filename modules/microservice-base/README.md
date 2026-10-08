@@ -80,3 +80,9 @@ outputs `secret_arn`, `cloudwatch_log_group_name`) is unchanged. All new inputs 
 | IRSA (`eks_oidc_provider_arn`, `eks_oidc_provider_url`, `kubernetes_namespace`, `kubernetes_service_account`) | When set, the workload role trusts `system:serviceaccount:<ns>:<sa>` instead of `ecs-tasks.amazonaws.com`. |
 | `runtime_access_policy_arn` output and attachment | A managed policy for reading `<prefix>/<env>/<slug>/*` and the runtime secret; attached to the module's workload role by default and attachable to the service's own IRSA role. |
 | `runtime_secret_name` | Optional. The historic name `<env>-<slug>/runtime` is outside `<env>/*`, which the `aws-secrets-manager` ClusterSecretStore can read; new callers should set `<env>/<slug>/runtime`. Renaming replaces the secret. |
+
+## Tests
+
+`terraform test` (Terraform >= 1.7, mock AWS provider, `command = plan`, no credentials) in [`tests/`](tests): default log group, SSM and secret names unchanged; `log_group_prefix` pin; IRSA `sub`; IRSA without namespace fails.
+Run `terraform init -backend=false && terraform test` in this directory; CI runs it through
+`scripts/ci/terraform-validate-all.sh`.

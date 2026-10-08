@@ -5,8 +5,8 @@ Status: **Proposed** (validated with `terraform validate`; not applied anywhere)
 Topic-scoped Amazon MSK IAM policy for one service (contract: SASL_SSL with
 AWS_MSK_IAM through the service's IRSA role).
 - produce: the service's own evt.<ctx>.<aggregate>.* namespaces
-(produce_topic_prefixes) and exact topics (produce_topics, e.g. the DLQ
-of another namespace it consumes)
+(produce_topic_prefixes) and exact topics (produce_topics, optional; DLQs are
+consumer-owned and fall under the own prefix)
 - consume: only the listed topics, only with its own consumer groups
 cg.<service-id>.<purpose>.v<major> (consumer_groups) or the prefix
 cg.<service-id>. (consumer_group_prefixes)
@@ -39,7 +39,7 @@ Examples: [`examples/msk-client-access`](../../examples/msk-client-access/main.t
 | `policy_name` | `string` | required | IAM policy name, e.g. <env>-<service-slug>-msk. |
 | `cluster_arn` | `string` | required | MSK cluster ARN (msk-cluster output cluster_arn). |
 | `produce_topic_prefixes` | `list(string)` | `[]` | The service's own aggregates as evt.<ctx>.<aggregate>. prefixes (e.g. ["evt.ln.loan."]). |
-| `produce_topics` | `list(string)` | `[]` | Exact topics the service writes, evt.<ctx>.<aggregate>.<event>.v<major> (e.g. the DLQ evt.<ctx>.<aggregate>.dlq.v1 of a namespace it consumes). |
+| `produce_topics` | `list(string)` | `[]` | Exact topics the service writes, evt.<ctx>.<aggregate>.<event>.v<major> (optional; DLQs are consumer-owned and already covered by produce_topic_prefixes). |
 | `consume_topics` | `list(string)` | `[]` | Topics the service consumes, full names (evt.<ctx>.<aggregate>.<event>.v<major>) or an aggregate prefix ending in .* . |
 | `consumer_groups` | `list(string)` | `[]` | Declared consumer groups cg.<service-id>.<purpose>.v<major>. |
 | `consumer_group_prefixes` | `list(string)` | `[]` | Optional prefix form cg.<service-id>. (covers every group of the service). |
@@ -57,7 +57,19 @@ Examples: [`examples/msk-client-access`](../../examples/msk-client-access/main.t
 ## Inputs from the topic catalog
 
 `fintechbankx-platform-event-streaming-kafka` renders `topics/generated/msk-client-access.json`; its per-service fields
-map one to one onto this module: `produce_topics`, `produce_topic_prefixes`, `consume_topics`, `consumer_groups`
+map one to one onto this module: `produce_topic_prefixes`, `produce_topics`, `consume_topics`, `consumer_groups`
 (`cg.<service-id>.<purpose>.v<major>`) and `consumer_group_prefixes` (`cg.<service-id>.`). Consumer groups must
-start with `cg.<service_id>.` (plan-time precondition). The policy never grants `CreateTopic`, `AlterTopic` or
-`DeleteTopic`; the topic provisioning job uses `topic_admin_policy_arn` from `msk-cluster`.
+start with `cg.<service_id>.` (plan-time precondition).
+
+DLQs are owned by the consuming service (ADR-019, ADR-024 in the event-streaming repository), so a service normally
+writes only under its own `produce_topic_prefixes`. `produce_topics` stays as an optional input for exact topic
+grants (for example a narrower grant than the prefix); it should not be needed for another context's DLQ.
+
+The policy never grants `CreateTopic`, `AlterTopic` or `DeleteTopic`; the topic provisioning job uses
+`topic_admin_policy_arn` from `msk-cluster`.
+
+## Tests
+
+`terraform test` (Terraform >= 1.7, mock AWS provider, `command = plan`, no credentials) in [`tests/`](tests): own-prefix and own-group grants only; no topic administration; foreign group prefix, missing group and wildcards rejected.
+Run `terraform init -backend=false && terraform test` in this directory; CI runs it through
+`scripts/ci/terraform-validate-all.sh`.

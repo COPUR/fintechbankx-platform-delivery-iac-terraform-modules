@@ -3,6 +3,7 @@
 #   1. terraform fmt -check -recursive
 #   2. init -backend=false + validate for modules/*, examples/*, stacks/*,
 #      services/* and tests/consumer-compat/*
+#      (+ terraform test with mock providers where a tests/ directory exists)
 #   3. type-check stacks/*/environments/*.tfvars.example against the stack
 #      variables (terraform console with a temporary local-backend override)
 # Usage: scripts/ci/terraform-validate-all.sh   (TERRAFORM=/path/to/terraform)
@@ -38,6 +39,12 @@ for d in "${roots[@]}"; do
   if ! (cd "$d" && "$TF" init -backend=false -input=false -no-color >/dev/null && "$TF" validate -no-color); then
     echo "::error::terraform validate failed in $d"
     failures=$((failures + 1))
+  elif [ -d "$d/tests" ]; then
+    echo "== test $d"
+    if ! (cd "$d" && "$TF" test -no-color); then
+      echo "::error::terraform test failed in $d"
+      failures=$((failures + 1))
+    fi
   fi
   clean "$d"
 done
