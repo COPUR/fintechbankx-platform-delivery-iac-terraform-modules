@@ -148,8 +148,12 @@ variable "create_app_secret" {
 
 variable "app_secret_name" {
   type        = string
-  description = "Application credential secret name. Use <env>/<service-slug>/db-app so the aws-secrets-manager ClusterSecretStore (reads <env>/*) can sync it. null keeps the legacy <name>/db-app."
-  default     = null
+  description = "Application credential secret name, <env>/<service-slug>/<name> (usually db-app), so only the service's own ExternalSecret can sync it (platform contract). Required; the migration secret defaults to the same <env>/<service-slug>/ directory."
+
+  validation {
+    condition     = can(regex("^[a-z0-9-]+/[a-z0-9-]+/[a-z0-9-]+$", var.app_secret_name))
+    error_message = "app_secret_name must be <env>/<service-slug>/<name>, e.g. dev/loan-lifecycle-service/db-app."
+  }
 }
 
 variable "create_migration_secret" {
@@ -160,7 +164,7 @@ variable "create_migration_secret" {
 
 variable "migration_secret_name" {
   type        = string
-  description = "Schema-owner (Flyway) credential secret name, <env>/<service-slug>/db-migration. null keeps <name>/db-migration."
+  description = "Schema-owner (Flyway) credential secret name, <env>/<service-slug>/db-migration. null puts it next to app_secret_name."
   default     = null
 
   validation {

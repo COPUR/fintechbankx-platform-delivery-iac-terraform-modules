@@ -133,7 +133,7 @@ resource "aws_rds_cluster_instance" "this" {
 # Runtime (application) credential container.
 resource "aws_secretsmanager_secret" "app" {
   count                   = var.create_app_secret ? 1 : 0
-  name                    = var.app_secret_name != null ? var.app_secret_name : "${var.name}/db-app"
+  name                    = var.app_secret_name
   description             = "Application credential for ${var.database_name}"
   kms_key_id              = local.kms_key_arn
   recovery_window_in_days = 7
@@ -143,7 +143,7 @@ resource "aws_secretsmanager_secret" "app" {
 # Schema owner (migration) credential container.
 resource "aws_secretsmanager_secret" "migration" {
   count                   = var.create_migration_secret ? 1 : 0
-  name                    = var.migration_secret_name != null ? var.migration_secret_name : "${var.name}/db-migration"
+  name                    = coalesce(var.migration_secret_name, "${dirname(var.app_secret_name)}/db-migration")
   description             = "Schema owner (Flyway migration) credential for ${var.database_name}"
   kms_key_id              = local.kms_key_arn
   recovery_window_in_days = 7

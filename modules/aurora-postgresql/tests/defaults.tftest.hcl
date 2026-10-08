@@ -23,6 +23,7 @@ variables {
   vpc_id                     = "vpc-0123456789abcdef0"
   subnet_ids                 = ["subnet-0aaaaaaaaaaaaaaa1", "subnet-0aaaaaaaaaaaaaaa2", "subnet-0aaaaaaaaaaaaaaa3"]
   allowed_security_group_ids = ["sg-0123456789abcdef0"]
+  app_secret_name            = "dev/loan-lifecycle-service/db-app"
 }
 
 run "secure_defaults" {
@@ -91,4 +92,23 @@ run "migration_secret_name_convention" {
   }
 
   expect_failures = [var.migration_secret_name]
+}
+
+run "migration_secret_defaults_next_to_app_secret" {
+  command = plan
+
+  assert {
+    condition     = aws_secretsmanager_secret.migration[0].name == "dev/loan-lifecycle-service/db-migration"
+    error_message = "Without migration_secret_name the owner secret sits next to the app secret, under <env>/<service-slug>/."
+  }
+}
+
+run "legacy_secret_name_rejected" {
+  command = plan
+
+  variables {
+    app_secret_name = "dev-loan-lifecycle-service/db-app"
+  }
+
+  expect_failures = [var.app_secret_name]
 }

@@ -49,7 +49,7 @@ Examples: [`examples/aurora-postgresql`](../../examples/aurora-postgresql/main.t
 | `performance_insights_retention_days` | `number` | `7` | Performance Insights retention (7 is free tier). |
 | `log_min_duration_statement_ms` | `number` | `500` | Log statements slower than this many milliseconds. |
 | `create_app_secret` | `bool` | `true` | Create the empty application credential secret. |
-| `app_secret_name` | `string` | `null` | Application credential secret name. Use <env>/<service-slug>/db-app so the aws-secrets-manager ClusterSecretStore (reads <env>/*) can sync it. null keeps the legacy <name>/db-app. |
+| `app_secret_name` | `string` | required | Application credential secret name, `<env>/<service-slug>/<name>` (usually `db-app`), so only the service's own ExternalSecret can sync it. The migration secret defaults to the same directory. |
 | `alarm_topic_arn` | `string` | `null` | SNS topic for alarms; null disables notifications. |
 | `acu_alarm_threshold_percent` | `number` | `85` | ACUUtilization alarm threshold. |
 | `connections_alarm_threshold` | `number` | `100` | DatabaseConnections alarm threshold. |
