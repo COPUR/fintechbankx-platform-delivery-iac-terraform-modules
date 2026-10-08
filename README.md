@@ -73,6 +73,8 @@ CI proves only that every module, example and stack validates.
 | [modules/external-secrets-irsa](modules/external-secrets-irsa/README.md) | IRSA role behind ClusterSecretStore `aws-secrets-manager` |
 | [modules/ecr-repository](modules/ecr-repository/README.md) | Immutable, scanned, KMS-encrypted image repository |
 | [modules/observability-amp](modules/observability-amp/README.md) | Amazon Managed Prometheus and optional Managed Grafana |
+| [modules/operator-access](modules/operator-access/README.md) | In-VPC operator host, SSM Session Manager only (no SSH, no public IP, IMDSv2, encrypted root) |
+| [modules/operator-db-access](modules/operator-db-access/README.md) | Per-service operator roles: read `<env>/<slug>/db-import` only, KMS decrypt via Secrets Manager only |
 | [modules/github-oidc](modules/github-oidc/README.md) | GitHub Actions OIDC roles per service (push, deploy, plan, apply) |
 | [stacks/platform](stacks/platform/README.md) | Per-environment composition root (dev, staging, prod) |
 | `services/*` | Legacy open-finance baseline stacks from the monorepo (still validate; use `microservice-base`) |

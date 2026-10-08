@@ -1,0 +1,75 @@
+# Per-service operator roles for database imports. Each role may read only
+# the secret <env>/<slug>/db-import (credential an operator uses from the
+# operator host) and decrypt it only through Secrets Manager for that secret
+# (kms:ViaService + encryption context SecretARN). The roles are assumed by
+# existing principals, normally IAM Identity Center permission-set roles; this
+# module creates no permission set or user.
+
+data "aws_partition" "current" {}
+data "aws_region" "current" {}
+data "aws_caller_identity" "current" {}
+
+locals {
+  secret_arn_pattern = {
+    for s in var.service_slugs : s =>
+    "arn:${data.aws_partition.current.partition}:secretsmanager:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:secret:${var.environment}/${s}/db-import-??????"
+  }
+}
+
+data "aws_iam_policy_document" "trust" {
+  statement {
+    sid     = "OperatorPrincipals"
+    actions = ["sts:AssumeRole", "sts:SetSourceIdentity"]
+    principals {
+      type        = "AWS"
+      identifiers = var.trusted_principal_arns
+    }
+  }
+}
+
+resource "aws_iam_role" "this" {
+  for_each = toset(var.service_slugs)
+
+  name                 = "${var.environment}-${each.key}-db-import"
+  description          = "Operator access to ${var.environment}/${each.key}/db-import only"
+  assume_role_policy   = data.aws_iam_policy_document.trust.json
+  max_session_duration = var.max_session_duration_seconds
+  permissions_boundary = var.permissions_boundary_arn
+  tags                 = merge(var.tags, { "fintechbankx.io/service-slug" = each.key })
+}
+
+data "aws_iam_policy_document" "access" {
+  for_each = toset(var.service_slugs)
+
+  statement {
+    sid       = "ReadDbImportSecret"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [local.secret_arn_pattern[each.key]]
+  }
+
+  statement {
+    sid       = "DecryptDbImportSecret"
+    actions   = ["kms:Decrypt"]
+    resources = [lookup(var.kms_key_arns, each.key, "*")]
+
+    condition {
+      test     = "StringEquals"
+      variable = "kms:ViaService"
+      values   = ["secretsmanager.${data.aws_region.current.name}.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringLike"
+      variable = "kms:EncryptionContext:SecretARN"
+      values   = [local.secret_arn_pattern[each.key]]
+    }
+  }
+}
+
+resource "aws_iam_role_policy" "access" {
+  for_each = toset(var.service_slugs)
+
+  name   = "db-import-secret"
+  role   = aws_iam_role.this[each.key].id
+  policy = data.aws_iam_policy_document.access[each.key].json
+}

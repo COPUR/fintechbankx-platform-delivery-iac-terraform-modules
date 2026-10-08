@@ -263,3 +263,21 @@ variable "platform_workflow_refs" {
   description = "Passed to github-oidc: release tags (refs/tags/...) or 40-character release SHAs of the platform workflows."
   default     = ["refs/tags/v*"]
 }
+
+variable "operator_access_enabled" {
+  type        = bool
+  description = "Create the SSM-only operator host (and, with operator_db_import_service_slugs, the per-service db-import operator roles)."
+  default     = false
+}
+
+variable "operator_db_import_service_slugs" {
+  type        = list(string)
+  description = "Service slugs that get an operator role reading only <env>/<slug>/db-import."
+  default     = []
+}
+
+variable "operator_principal_arns" {
+  type        = list(string)
+  description = "IAM Identity Center permission-set role ARNs allowed to assume the operator roles (required when operator_db_import_service_slugs is set)."
+  default     = []
+}

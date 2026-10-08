@@ -141,3 +141,18 @@ output "ingress_tls_secret_name" {
   description = "Secrets Manager name the mesh repo syncs for the ingress gateway certificate (created and filled outside Terraform; no certificate material here)."
   value       = "${var.environment}/platform/ingress-tls"
 }
+
+output "operator_security_group_id" {
+  description = "Security group of the SSM-only operator host (null when operator access is off); add to a service database's allowed_security_group_ids."
+  value       = var.operator_access_enabled ? module.operator_access[0].operator_security_group_id : null
+}
+
+output "operator_instance_id" {
+  description = "Operator host instance id (null when off)."
+  value       = var.operator_access_enabled ? module.operator_access[0].instance_id : null
+}
+
+output "operator_db_import_role_arns" {
+  description = "Per-service db-import operator role ARNs (empty when off)."
+  value       = length(module.operator_db_access) > 0 ? module.operator_db_access[0].role_arns : {}
+}

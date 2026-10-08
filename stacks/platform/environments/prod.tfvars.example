@@ -118,3 +118,11 @@ github_services = {
     terraform_state_key = "open-finance/open-products-catalog-service/terraform.tfstate"
   }
 }
+
+# Operator access (SSM Session Manager only). Off until Identity Center
+# permission sets exist; then list their role ARNs and the services that need
+# a db-import role, e.g.
+#   operator_access_enabled          = true
+#   operator_db_import_service_slugs = ["payment-request-to-pay-service"]
+#   operator_principal_arns          = ["arn:aws:iam::111122223333:role/aws-reserved/sso.amazonaws.com/me-central-1/AWSReservedSSO_DbOperator_0123456789abcdef"]
+operator_access_enabled = false

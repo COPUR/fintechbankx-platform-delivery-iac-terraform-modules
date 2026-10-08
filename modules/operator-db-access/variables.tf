@@ -1,0 +1,58 @@
+variable "environment" {
+  type        = string
+  description = "Environment segment of the secret names (dev, staging, prod)."
+
+  validation {
+    condition     = contains(["dev", "staging", "prod"], var.environment)
+    error_message = "environment must be dev, staging or prod."
+  }
+}
+
+variable "service_slugs" {
+  type        = list(string)
+  description = "Service slugs (Helm chart / service account name, e.g. payment-request-to-pay-service); one role each."
+
+  validation {
+    condition     = alltrue([for s in var.service_slugs : can(regex("^[a-z][a-z0-9-]{1,40}$", s))])
+    error_message = "service_slugs must be lowercase kebab-case slugs."
+  }
+}
+
+variable "trusted_principal_arns" {
+  type        = list(string)
+  description = "IAM role ARNs allowed to assume the operator roles (IAM Identity Center permission-set roles). No wildcard, no account root."
+
+  validation {
+    condition     = length(var.trusted_principal_arns) > 0 && alltrue([for a in var.trusted_principal_arns : can(regex("^arn:aws[a-z-]*:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]+$", a)) && !strcontains(a, "*")])
+    error_message = "trusted_principal_arns must list IAM role ARNs without wildcards."
+  }
+}
+
+variable "kms_key_arns" {
+  type        = map(string)
+  description = "Optional CMK ARN per service slug (the aurora-postgresql kms_key_arn output). Without one the statement is limited by kms:ViaService and the SecretARN encryption context only."
+  default     = {}
+}
+
+variable "max_session_duration_seconds" {
+  type        = number
+  description = "Maximum session duration of the operator roles."
+  default     = 3600
+
+  validation {
+    condition     = var.max_session_duration_seconds >= 900 && var.max_session_duration_seconds <= 14400
+    error_message = "max_session_duration_seconds must be 900..14400."
+  }
+}
+
+variable "permissions_boundary_arn" {
+  type        = string
+  description = "Optional permissions boundary for the roles."
+  default     = null
+}
+
+variable "tags" {
+  type        = map(string)
+  description = "Resource tags."
+  default     = {}
+}

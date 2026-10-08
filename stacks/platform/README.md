@@ -16,6 +16,7 @@ Composition root for one environment (one cell in one region, default `me-centra
 | [`irsa-role`](../../modules/irsa-role/README.md) | `<cluster>-obs-{prometheus,otel-gateway,tempo,loki,yace}` roles ([observability.tf](observability.tf)) |
 | [`aurora-postgresql`](../../modules/aurora-postgresql/README.md) | Small Grafana database (staging, prod), credential container `<env>/observability/grafana-db` |
 | [`github-oidc`](../../modules/github-oidc/README.md) | GitHub Actions OIDC provider and per-service ecr-push / deploy / tf-plan / tf-apply roles |
+| [`operator-access`](../../modules/operator-access/README.md), [`operator-db-access`](../../modules/operator-db-access/README.md) | Off by default (`operator_access_enabled`): SSM-only operator host in a private subnet, and per-service roles `<env>-<slug>-db-import` for `operator_db_import_service_slugs`, assumable by `operator_principal_arns` ([operator.tf](operator.tf)) |
 
 [observability.tf](observability.tf) also creates SSE-KMS buckets `fintechbankx-<env>-obs-{traces,logs-chunks,logs-ruler}` (TLS-only, public access blocked). MSK enhanced monitoring defaults to `PER_BROKER`; Aurora and MSK are tagged `fintechbankx.io/observability=enabled` for YACE.
 
@@ -58,6 +59,7 @@ statements in `terraform_state_bucket_policy_source_json` (the attachment replac
 | `platform_secrets_role_arn` | mesh repo: `external-secrets-platform` service account annotation, overlay parameter `PLATFORM_SECRETS_ROLE_ARN` (ClusterSecretStore `aws-secrets-manager-platform`) |
 | `vpc_cidr`, `private_subnet_cidrs`, `msk_security_group_id`, `msk_subnet_ids` | mesh repo `params.env` |
 | `ingress_tls_secret_name` | mesh repo: gateway certificate at Secrets Manager `<env>/platform/ingress-tls` (created and filled outside Terraform; no certificate material in this repository) |
+| `operator_security_group_id`, `operator_instance_id`, `operator_db_import_role_arns` | service repos: add the security group to the database `allowed_security_group_ids`; operators: `aws ssm start-session --target <instance id>` after assuming the db-import role |
 | `amp_remote_write_url`, `observability_role_arns`, `observability_buckets`, `grafana_db_secret_name` | observability repo (IRSA for `observability/{prometheus,otel-gateway,tempo,loki,yace}`) |
 
 ## Image names
