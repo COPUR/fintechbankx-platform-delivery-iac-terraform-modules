@@ -158,7 +158,8 @@ append-only for the pods. The `GRANT` makes any `UPDATE` or `DELETE` that still 
 refuses `TRUNCATE` of the table it is on by anyone, the owner and the master user included. `ENABLE ALWAYS` makes it
 fire under `session_replication_role = replica` too, where an ordinary trigger is skipped.
 
-Getting past the trigger takes DDL, and not only DDL that names the audit table:
+For any role but a superuser (below), getting past the trigger takes DDL, and not only DDL that names the audit
+table:
 
 - `ALTER TABLE ... DISABLE TRIGGER` or `DROP TRIGGER` on the audit table;
 - `CREATE OR REPLACE FUNCTION <schema>.audit_truncate_refused()` with a body that does not raise, or
@@ -181,11 +182,18 @@ A session that can turn off its own audit logging can get past the trigger witho
 `SET ON PARAMETER` on them, may change for its own session. After `SET pgaudit.log = 'none'; SET pgaudit.role = '';`
 the statements above, and any `UPDATE` or `DELETE` on an audit table, write no `AUDIT` line. On a local PostgreSQL
 16.15 with pgaudit 16.0, a superuser session ran `DISABLE TRIGGER`, `CREATE OR REPLACE FUNCTION`, `TRUNCATE` and
-`UPDATE` that way with 0 `AUDIT` lines. So did a
-`NOSUPERUSER` owner role after `GRANT SET ON PARAMETER pgaudit.log, pgaudit.role TO <owner>` (`DISABLE TRIGGER`,
-`TRUNCATE`, `UPDATE`: 0 lines; the `GRANT` itself was logged once, class `ROLE`, which the alarm above matches
-outside a migration window). Without that grant the owner role got `permission denied to set parameter
-"pgaudit.log"` (and `"pgaudit.role"`) and its `DISABLE TRIGGER` and `UPDATE` were logged.
+`UPDATE` that way with 0 `AUDIT` lines. So did a `NOSUPERUSER` owner role after
+`GRANT SET ON PARAMETER pgaudit.log, pgaudit.role TO <owner>` (`DISABLE TRIGGER`, `TRUNCATE`, `UPDATE`: 0 lines; the
+`GRANT` itself was logged once, class `ROLE`, which the alarm above matches outside a migration window). Without
+that grant the owner role got `permission denied to set parameter "pgaudit.log"` (and `"pgaudit.role"`) and its
+`DISABLE TRIGGER` and `UPDATE` were logged.
+
+A superuser needs neither a `SET` nor DDL: it can write the system catalogs, and
+`UPDATE pg_catalog.pg_trigger SET tgenabled = 'D' WHERE tgname = '<audit_table>_truncate_refused'` disables the
+trigger as class `WRITE`, which `ddl,role` does not log. Locally, with `pgaudit.log` and `pgaudit.role` left at
+`ddl,role` and `rds_pgaudit`, that `UPDATE` and a `TRUNCATE` of the audit table in one transaction wrote 0 `AUDIT`
+lines, while the owner role got `permission denied for table pg_trigger`. On Aurora this path is closed only if
+`rds_superuser` cannot write the system catalogs; drill check 10 records what the master user gets.
 
 Other superuser-only settings keep every `AUDIT` line out of the PostgreSQL log while `pgaudit.log` and
 `pgaudit.role` stay at `ddl,role` and `rds_pgaudit`. Locally, a superuser session's `DISABLE TRIGGER`, `TRUNCATE`
@@ -356,10 +364,13 @@ Checks for the products-catalog history guard, run as the RDS master user on Aur
       `SET log_min_messages = 'fatal';`, and `SET pgaudit.log_client = on;` with `SET pgaudit.log_level = 'debug5';`.
       Record whether each one succeeds or fails with `permission denied to set parameter`. After each one that
       succeeds, run the `DISABLE TRIGGER` statement above and an `UPDATE` on the table in that session and record
-      whether an `AUDIT` line reaches CloudWatch. The results describe the master user and do not lift the
-      compensating control above (Aurora Database Activity Streams, or the master credential as break-glass with the
-      CloudTrail `GetSecretValue` alarm): it is a pre-production gate whatever they show, since these are not the
-      only settings that can keep `AUDIT` lines out of the log;
+      whether an `AUDIT` line reaches CloudWatch. In a session with no `SET`, run
+      `BEGIN; UPDATE pg_catalog.pg_trigger SET tgenabled = 'D' WHERE tgname = '<table>_truncate_refused'; ROLLBACK;`
+      and record whether it fails with `permission denied for table pg_trigger` (a superuser disables the trigger
+      that way with no log line). The results describe the master user and do not lift the compensating control above
+      (Aurora Database Activity Streams, or the master credential as break-glass with the CloudTrail `GetSecretValue`
+      alarm): it is a pre-production gate whatever they show, since these are not the only ways to keep `AUDIT` lines
+      out of the log;
     - as the service's migration (owner) role, in its own session (logged in with its `db-migration` secret): each
       `SET` above fails with `permission denied to set parameter`, as on a local PostgreSQL 16.15. Then, as the
       master user, list the settings the owner role may `SET` through a grant to it, to a role it is in or to

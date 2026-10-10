@@ -331,3 +331,34 @@ run "misc_class_does_not_catch_the_set" {
     error_message = "README: say that the SET that turns audit logging off is never logged, so adding misc or misc_set to pgaudit_log_classes does not catch it."
   }
 }
+
+# "Getting past the trigger takes DDL" does not hold for a superuser, which can
+# write the system catalogs. Checked on a local PostgreSQL 16.15 with pgaudit
+# 16.0, pgaudit.log and pgaudit.role left at ddl,role and rds_pgaudit, no SET:
+# a superuser's UPDATE pg_catalog.pg_trigger SET tgenabled = 'D' and TRUNCATE
+# of the audit table wrote 0 AUDIT lines; the NOSUPERUSER owner got permission
+# denied for table pg_trigger. Drill check 10 records what the master user gets.
+run "catalog_write_bypass_named" {
+  command = plan
+
+  assert {
+    condition     = length(regexall("(?i)(^|\\n)Getting\\s+past\\s+the\\s+trigger\\s+takes\\s+DDL", file("${path.module}/README.md"))) == 0
+    error_message = "README: 'Getting past the trigger takes DDL' needs its qualifier: a superuser disables the trigger with catalog DML."
+  }
+
+  assert {
+    condition = alltrue([
+      for needle in ["UPDATE pg_catalog.pg_trigger SET tgenabled = 'D'", "class `WRITE`", "system catalogs", "permission denied for table pg_trigger"] :
+      strcontains(one(regex("(?s)\n```\n\nThe default privileges give the runtime role(.*?)\n## TLS to the database", file("${path.module}/README.md"))), needle)
+    ])
+    error_message = "README: name the superuser's catalog DML (UPDATE pg_catalog.pg_trigger, class WRITE, not logged) and that the Aurora impact rests on rds_superuser having no catalog write access."
+  }
+
+  assert {
+    condition = alltrue([
+      for needle in ["UPDATE pg_catalog.pg_trigger SET tgenabled = 'D'", "permission denied for table pg_trigger"] :
+      strcontains(one(regex("(?s)\n10\\. (.*?)\n11\\. ", file("${path.module}/README.md"))), needle)
+    ])
+    error_message = "README Aurora 16 drill check 10 must record whether the master user can disable the trigger through pg_trigger."
+  }
+}
