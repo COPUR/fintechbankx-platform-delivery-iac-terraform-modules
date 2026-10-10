@@ -273,3 +273,36 @@ run "other_settings_that_silence_audit" {
     error_message = "README: the compensating control is a pre-production gate without condition; drill check 10's SETs do not lift it."
   }
 }
+
+# Drill check 10 expected the owner role's SETs to fail but ran every step as
+# the master user, and did not look for SET ON PARAMETER grants. It now has a
+# step run as the owner role and a has_parameter_privilege query (checked on a
+# local PostgreSQL 16.15: no rows without grants; with a grant through a group
+# role, a grant to PUBLIC and rds_superuser membership it lists all three).
+run "drill_verifies_owner_cannot_turn_off_audit" {
+  command = plan
+
+  assert {
+    condition = alltrue([
+      for needle in [
+        "- as the service's migration (owner) role, in its own session",
+        "has_parameter_privilege('<owner role>', p, 'SET')",
+        "pg_has_role('<owner role>', 'rds_superuser', 'MEMBER')",
+        "(0 rows)",
+        "class `ROLE`",
+      ] :
+      strcontains(one(regex("(?s)\n10\\. (.*?)\n11\\. ", file("${path.module}/README.md"))), needle)
+    ])
+    error_message = "README Aurora 16 drill check 10 must run the SETs as the owner role and list the settings it may SET (has_parameter_privilege) and its rds_superuser membership: (0 rows)."
+  }
+
+  assert {
+    condition     = length(regexall("(?i)Expected\\s+for\\s+the\\s+service's\\s+migration\\s+\\(owner\\)\\s+role", file("${path.module}/README.md"))) == 0
+    error_message = "README drill check 10: the owner role's result is a step of the check, not an expectation no step verifies."
+  }
+
+  assert {
+    condition     = strcontains(file("${path.module}/README.md"), "The schema owner is meant to be such a role; drill check 10 checks it.")
+    error_message = "README: say that drill check 10 checks that the schema owner cannot turn off its own audit logging."
+  }
+}

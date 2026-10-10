@@ -171,8 +171,8 @@ Run by a role that cannot turn off audit logging for its own session (not a supe
 `rds_superuser`, and no `GRANT SET ON PARAMETER` on any superuser-only setting, `pgaudit.log`, `pgaudit.role`,
 `pgaudit.log_client`, `pgaudit.log_level` and `log_min_messages` among them, to it, to a role it is in or to
 `PUBLIC`), every one of these is logged as `AUDIT: SESSION` class `DDL` (the default `pgaudit.log` includes `ddl`).
-The schema owner is meant to be such a role. Log alarms (CloudWatch metric filters on the `postgresql` log
-group, owned by the observability repository) should match `AUDIT: OBJECT` on the audit tables, and
+The schema owner is meant to be such a role; drill check 10 checks it. Log alarms (CloudWatch metric filters on the
+`postgresql` log group, owned by the observability repository) should match `AUDIT: OBJECT` on the audit tables, and
 any `AUDIT: SESSION` line of class `DDL` (or `ROLE`) outside a migration window: that is the `TRUNCATE` precursor to
 alert on. A filter that matches only statements naming an audit table misses the function replacement.
 
@@ -352,8 +352,22 @@ Checks for the products-catalog history guard, run as the RDS master user on Aur
       whether an `AUDIT` line reaches CloudWatch. The results describe the master user and do not lift the
       compensating control above (Aurora Database Activity Streams, or the master credential as break-glass with the
       CloudTrail `GetSecretValue` alarm): it is a pre-production gate whatever they show, since these are not the
-      only settings that can keep `AUDIT` lines out of the log. Expected for the service's migration (owner) role:
-      each `SET` fails with `permission denied to set parameter`, as on a local PostgreSQL 16.15.
+      only settings that can keep `AUDIT` lines out of the log;
+    - as the service's migration (owner) role, in its own session (logged in with its `db-migration` secret): each
+      `SET` above fails with `permission denied to set parameter`, as on a local PostgreSQL 16.15. Then, as the
+      master user, list the settings the owner role may `SET` through a grant to it, to a role it is in or to
+      `PUBLIC`, and its membership in `rds_superuser`. Expected: `(0 rows)`.
+
+      ```sql
+      SELECT p AS settable FROM unnest(ARRAY['pgaudit.log', 'pgaudit.role', 'pgaudit.log_client', 'pgaudit.log_level',
+                                             'log_min_messages']) AS p
+       WHERE has_parameter_privilege('<owner role>', p, 'SET')
+      UNION ALL
+      SELECT 'member of rds_superuser' WHERE pg_has_role('<owner role>', 'rds_superuser', 'MEMBER');
+      ```
+
+      A later `GRANT SET ON PARAMETER` or `GRANT rds_superuser` to the owner role is logged as `AUDIT: SESSION`
+      class `ROLE`, which the log alarm (Audit logging above) matches outside a migration window.
 11. The master user can `CREATE EVENT TRIGGER`: expected, it succeeds as `rds_superuser` on Aurora PostgreSQL 16.
 12. No writer membership is left after the master user arms the guard or hands the writer back. The master user is
     not a superuser, so `set_history_writer()` grants it the schema owner and `open_products_catalog_history_writer`
