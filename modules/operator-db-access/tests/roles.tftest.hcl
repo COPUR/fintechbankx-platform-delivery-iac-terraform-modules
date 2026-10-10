@@ -22,6 +22,11 @@ variables {
   environment            = "dev"
   service_slugs          = ["payment-request-to-pay-service", "loan-lifecycle-service"]
   trusted_principal_arns = ["arn:aws:iam::111122223333:role/aws-reserved/sso.amazonaws.com/me-central-1/AWSReservedSSO_DbOperator_0123456789abcdef"]
+  # ADR-023 secrets key of each service (aurora-postgresql secrets_kms_key_arn).
+  kms_key_arns = {
+    "payment-request-to-pay-service" = "arn:aws:kms:me-central-1:111122223333:key/11111111-2222-3333-4444-555555555555"
+    "loan-lifecycle-service"         = "arn:aws:kms:me-central-1:111122223333:key/66666666-7777-8888-9999-000000000000"
+  }
 }
 
 run "one_role_per_service" {
@@ -101,10 +106,6 @@ run "bad_slug_rejected" {
 run "creates_empty_db_import_secret_containers" {
   command = plan
 
-  variables {
-    kms_key_arns = { "payment-request-to-pay-service" = "arn:aws:kms:me-central-1:111122223333:key/11111111-2222-3333-4444-555555555555" }
-  }
-
   assert {
     condition     = aws_secretsmanager_secret.db_import["payment-request-to-pay-service"].name == "dev/payment-request-to-pay-service/db-import"
     error_message = "Secret container <env>/<slug>/db-import per service."
@@ -149,5 +150,79 @@ run "reads_only_its_postgresql_log_group" {
   assert {
     condition     = [for s in data.aws_iam_policy_document.logs["payment-request-to-pay-service"].statement : s.resources if s.sid == "ReadPostgresqlLogGroup"][0] == toset(["arn:aws:logs:me-central-1:111122223333:log-group:/aws/rds/cluster/dev-rtp/postgresql", "arn:aws:logs:me-central-1:111122223333:log-group:/aws/rds/cluster/dev-rtp/postgresql:*"])
     error_message = "Only that log group and its streams."
+  }
+}
+
+# Review 2026-10-10: the db-import secret must use the service's secrets key
+# (ADR-023, tagged fintechbankx.io/secrets) for every slug, so kms:Decrypt is
+# scoped to a key and never falls back to the account's AWS managed key, which
+# any principal allowed to call GetSecretValue can use.
+run "secrets_key_required_for_every_slug" {
+  command = plan
+
+  variables {
+    kms_key_arns = { "payment-request-to-pay-service" = "arn:aws:kms:me-central-1:111122223333:key/11111111-2222-3333-4444-555555555555" }
+  }
+
+  expect_failures = [aws_secretsmanager_secret.db_import]
+}
+
+run "no_key_needed_when_another_stack_owns_the_secrets" {
+  command = plan
+
+  variables {
+    create_db_import_secrets = false
+    kms_key_arns             = {}
+  }
+
+  assert {
+    condition     = length(aws_secretsmanager_secret.db_import) == 0
+    error_message = "Without containers no key is required."
+  }
+}
+
+run "kms_key_arns_must_be_key_arns" {
+  command = plan
+
+  variables {
+    kms_key_arns = {
+      "payment-request-to-pay-service" = "alias/dev-payment-request-to-pay-service-db-secrets"
+      "loan-lifecycle-service"         = "arn:aws:kms:me-central-1:111122223333:key/*"
+    }
+  }
+
+  expect_failures = [var.kms_key_arns]
+}
+
+run "decrypt_scoped_to_the_secrets_key" {
+  command = plan
+
+  assert {
+    condition     = [for s in data.aws_iam_policy_document.access["loan-lifecycle-service"].statement : s.resources if s.sid == "DecryptDbImportSecret"][0] == toset(["arn:aws:kms:me-central-1:111122223333:key/66666666-7777-8888-9999-000000000000"])
+    error_message = "kms:Decrypt only on that service's secrets key."
+  }
+
+  assert {
+    condition     = aws_secretsmanager_secret.db_import["loan-lifecycle-service"].kms_key_id == "arn:aws:kms:me-central-1:111122223333:key/66666666-7777-8888-9999-000000000000"
+    error_message = "Every db-import container uses its service's secrets key."
+  }
+}
+
+# Every session must carry a source identity (the operator's Identity Center
+# user name), so CloudTrail and the database audit trail name a person, not
+# just the shared permission-set role.
+run "trust_requires_source_identity" {
+  command = plan
+
+  assert {
+    condition = toset(flatten([
+      for c in one(data.aws_iam_policy_document.trust.statement).condition : "${c.test}|${c.variable}|${join(",", c.values)}"
+    ])) == toset(["StringLike|sts:SourceIdentity|*"])
+    error_message = "The trust policy must require sts:SourceIdentity (StringLike \"*\")."
+  }
+
+  assert {
+    condition     = toset(one(data.aws_iam_policy_document.trust.statement).actions) == toset(["sts:AssumeRole", "sts:SetSourceIdentity"])
+    error_message = "Assume and set the source identity in the same statement."
   }
 }

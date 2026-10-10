@@ -30,8 +30,13 @@ variable "trusted_principal_arns" {
 
 variable "kms_key_arns" {
   type        = map(string)
-  description = "Optional CMK ARN per service slug that encrypts its secrets (a secrets-only key, not the database storage key). Used for the db-import secret and to scope kms:Decrypt; without one the secret uses the AWS managed key and the statement is limited by kms:ViaService and the SecretARN encryption context only."
+  description = "ADR-023 secrets key ARN per service slug: the secrets-only key tagged fintechbankx.io/secrets=true (aurora-postgresql output secrets_kms_key_arn), never the database storage key. Encrypts the db-import secret and scopes kms:Decrypt. Required for every slug when create_db_import_secrets is true; with false, a slug without a key gets kms:Decrypt limited by kms:ViaService and the SecretARN encryption context only."
   default     = {}
+
+  validation {
+    condition     = alltrue([for k, a in var.kms_key_arns : can(regex("^arn:aws[a-z-]*:kms:[a-z0-9-]+:[0-9]{12}:key/(mrk-[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$", a))])
+    error_message = "kms_key_arns values must be KMS key ARNs (arn:aws:kms:<region>:<account>:key/<id>), not aliases or wildcards."
+  }
 }
 
 variable "max_session_duration_seconds" {
@@ -59,7 +64,7 @@ variable "tags" {
 
 variable "create_db_import_secrets" {
   type        = bool
-  description = "Create the empty secret container <env>/<slug>/db-import per service (no value: operators fill it with put-secret-value, so it never reaches Terraform state). Set false when another stack owns the secrets."
+  description = "Create the empty secret container <env>/<slug>/db-import per service (no value: the DBA fills it with put-secret-value, so it never reaches Terraform state). Requires a kms_key_arns entry for every slug. Set false when another stack owns the secrets."
   default     = true
 }
 

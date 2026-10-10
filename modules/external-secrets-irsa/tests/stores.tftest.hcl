@@ -46,7 +46,7 @@ run "service_and_platform_stores" {
 
   assert {
     condition = toset(flatten([
-      for st in data.aws_iam_policy_document.service_store.statement : tolist(st.resources) if st.effect == "Deny"
+      for st in data.aws_iam_policy_document.service_store.statement : tolist(st.resources) if st.effect == "Deny" && st.sid == "DenyPlatformAndIdentitySecrets"
       ])) == toset([
       "arn:aws:secretsmanager:me-central-1:111122223333:secret:prod/platform/*",
       "arn:aws:secretsmanager:me-central-1:111122223333:secret:prod/identity-keycloak/*",
@@ -89,5 +89,33 @@ run "service_and_platform_stores" {
       ])
     ])
     error_message = "kms:Decrypt only via Secrets Manager on keys tagged fintechbankx.io/secrets=true."
+  }
+}
+
+# Operator db-import credentials (<env>/<slug>/db-import, operator-db-access)
+# sit inside the service store's <env>/* read and are encrypted with the
+# tagged secrets key; an explicit Deny keeps both stores from reading or
+# decrypting them (Deny wins over any Allow, including <env>/*).
+run "db_import_secrets_denied_to_both_stores" {
+  command = plan
+
+  assert {
+    condition = alltrue([
+      for doc in [data.aws_iam_policy_document.service_store, data.aws_iam_policy_document.platform_store] :
+      length([
+        for st in doc.statement : st if st.effect == "Deny" &&
+        toset(st.actions) == toset(["secretsmanager:*"]) &&
+        toset(st.resources) == toset(["arn:aws:secretsmanager:me-central-1:111122223333:secret:prod/*/db-import-??????"])
+      ]) == 1
+    ])
+    error_message = "Both store roles must explicitly deny secretsmanager:* on <env>/*/db-import-??????."
+  }
+
+  assert {
+    condition = length([
+      for st in data.aws_iam_policy_document.service_store.statement : st
+      if st.effect != "Deny" && contains(tolist(st.resources), "arn:aws:secretsmanager:me-central-1:111122223333:secret:prod/*")
+    ]) == 1
+    error_message = "The Deny is needed because the service store still reads <env>/*."
   }
 }

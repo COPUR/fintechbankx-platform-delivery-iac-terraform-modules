@@ -15,6 +15,14 @@ Secrets Manager (`kms:ViaService`) with keys tagged `fintechbankx.io/secrets=tru
 `platform_secret_prefixes` (default matches the identity repo's `deploy/terraform`: `identity-keycloak/*` and
 `identity-openldap/admin`).
 
+Both roles also carry an explicit Deny of `secretsmanager:*` on `<env>/*/db-import-??????` (statement
+`DenyOperatorDbImportSecrets`). Those are the operator database-import credentials of
+[`operator-db-access`](../operator-db-access/README.md): they sit inside `<env>/*` and are encrypted with the service's
+tagged secrets key (ADR-023), so without the Deny the service store could read and decrypt them. Deny wins over every
+Allow, so no ExternalSecret can sync a `db-import` secret into the cluster. A mesh admission rule (Kyverno/CEL)
+rejecting ExternalSecrets whose remote key ends in `/db-import` would add a second, cluster-side layer; it belongs to
+the mesh repository.
+
 ## Usage
 
 ```hcl
@@ -72,4 +80,5 @@ Examples: [`examples/external-secrets-irsa`](../../examples/external-secrets-irs
 
 `terraform test` (mock providers, no credentials) in [`tests/`](tests): trusted service accounts per store; service
 store reads `<env>/*` with explicit Deny on the platform prefixes; platform store reads only its prefixes and
-`oidc-client`; only GetSecretValue/DescribeSecret/kms:Decrypt; KMS via Secrets Manager on tagged keys.
+`oidc-client`; only GetSecretValue/DescribeSecret/kms:Decrypt; KMS via Secrets Manager on tagged keys; both
+explicitly deny `<env>/*/db-import-??????` (`db_import_secrets_denied_to_both_stores`).

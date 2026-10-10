@@ -9,7 +9,10 @@
 #    prefixes plus <env>/*/oidc-client (the Keycloak realm import sets every
 #    client secret).
 # Both decrypt only through Secrets Manager with KMS keys tagged
-# fintechbankx.io/secrets=true. Neither may write or create secrets.
+# fintechbankx.io/secrets=true. Neither may write or create secrets, and both
+# explicitly deny the operator credentials <env>/<slug>/db-import
+# (operator-db-access): they sit inside <env>/* and use the tagged secrets
+# key, so only an explicit Deny keeps them out of the cluster.
 
 data "aws_partition" "current" {}
 data "aws_region" "current" {}
@@ -22,6 +25,8 @@ locals {
   platform_only_secret_arns = [for p in var.platform_secret_prefixes : "${local.secret_arn_root}/${p}/*"]
   # Secrets Manager appends -<6 random characters> to every secret ARN.
   oidc_client_secret_arn = "${local.secret_arn_root}/*/oidc-client-??????"
+  # Operator-only credentials (operator-db-access); never synced into the cluster.
+  operator_only_secret_arns = ["${local.secret_arn_root}/*/db-import-??????"]
 
   kms_key_arns = "arn:${data.aws_partition.current.partition}:kms:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:key/*"
 
@@ -43,6 +48,13 @@ data "aws_iam_policy_document" "service_store" {
     effect    = "Deny"
     actions   = ["secretsmanager:*"]
     resources = local.platform_only_secret_arns
+  }
+
+  statement {
+    sid       = "DenyOperatorDbImportSecrets"
+    effect    = "Deny"
+    actions   = ["secretsmanager:*"]
+    resources = local.operator_only_secret_arns
   }
 
   statement {
@@ -69,6 +81,13 @@ data "aws_iam_policy_document" "platform_store" {
     sid       = "ReadPlatformIdentityAndClientSecrets"
     actions   = ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"]
     resources = concat(local.platform_only_secret_arns, [local.oidc_client_secret_arn])
+  }
+
+  statement {
+    sid       = "DenyOperatorDbImportSecrets"
+    effect    = "Deny"
+    actions   = ["secretsmanager:*"]
+    resources = local.operator_only_secret_arns
   }
 
   statement {

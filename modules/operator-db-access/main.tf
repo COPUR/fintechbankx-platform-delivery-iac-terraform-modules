@@ -3,7 +3,8 @@
 # operator host) and decrypt it only through Secrets Manager for that secret
 # (kms:ViaService + encryption context SecretARN). The roles are assumed by
 # existing principals, normally IAM Identity Center permission-set roles; this
-# module creates no permission set or user.
+# module creates no permission set or user. Sessions must carry a source
+# identity (sts:SourceIdentity).
 
 data "aws_partition" "current" {}
 data "aws_region" "current" {}
@@ -16,13 +17,22 @@ locals {
   }
 }
 
+# Every session must name the person: the caller passes --source-identity
+# (normally the Identity Center user name); it is recorded in CloudTrail for
+# the AssumeRole and every call made with the session, and survives role
+# chaining. AssumeRole without a source identity is refused.
 data "aws_iam_policy_document" "trust" {
   statement {
-    sid     = "OperatorPrincipals"
+    sid     = "OperatorPrincipalsWithSourceIdentity"
     actions = ["sts:AssumeRole", "sts:SetSourceIdentity"]
     principals {
       type        = "AWS"
       identifiers = var.trusted_principal_arns
+    }
+    condition {
+      test     = "StringLike"
+      variable = "sts:SourceIdentity"
+      values   = ["*"]
     }
   }
 }
@@ -98,11 +108,25 @@ resource "aws_iam_role_policy" "access" {
   policy = data.aws_iam_policy_document.access[each.key].json
 }
 
-# Empty containers: the value is written by an operator (put-secret-value),
-# never by Terraform, so it is not in state. Not tagged fintechbankx.io/secrets:
-# External Secrets never syncs it into the cluster.
+# Empty containers: the value is written by the owning squad's DBA
+# (put-secret-value from a workstation), never by Terraform, so it is not in
+# state. Encrypted with the service's ADR-023 secrets key, which is tagged
+# fintechbankx.io/secrets=true and therefore usable by the External Secrets
+# roles: what keeps the secret out of the cluster is the explicit Deny on
+# <env>/*/db-import-?????? in both store roles (external-secrets-irsa,
+# DenyOperatorDbImportSecrets), not a tag on the secret.
 resource "aws_secretsmanager_secret" "db_import" {
   for_each = var.create_db_import_secrets ? toset(var.service_slugs) : toset([])
+
+  lifecycle {
+    # Without a customer managed key the secret falls back to the AWS managed
+    # key aws/secretsmanager, which every principal allowed GetSecretValue in
+    # the account can use; the kms:Decrypt grant could not be scoped to a key.
+    precondition {
+      condition     = contains(keys(var.kms_key_arns), each.key)
+      error_message = "kms_key_arns must name the ADR-023 secrets key (aurora-postgresql output secrets_kms_key_arn) of every service slug when create_db_import_secrets is true."
+    }
+  }
 
   name                    = "${var.environment}/${each.key}/db-import"
   description             = "Operator database import credential for ${each.key}; filled by an operator, read only through ${var.environment}-${each.key}-db-import"
