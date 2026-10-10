@@ -178,10 +178,10 @@ alert on. A filter that matches only statements naming an audit table misses the
 
 A session that can turn off its own audit logging can get past the trigger without any log line. `pgaudit.log` and
 `pgaudit.role` are superuser-only settings, which a superuser, and on PostgreSQL 16 any role granted
-`SET ON PARAMETER` on them, may change for its own session, and `SET` is class `MISC`, which `ddl,role` does not
-log. After `SET pgaudit.log = 'none'; SET pgaudit.role = '';` the statements above, and any `UPDATE` or `DELETE` on
-an audit table, write no `AUDIT` line. On a local PostgreSQL 16.15 with pgaudit 16.0, a superuser session ran
-`DISABLE TRIGGER`, `CREATE OR REPLACE FUNCTION`, `TRUNCATE` and `UPDATE` that way with 0 `AUDIT` lines. So did a
+`SET ON PARAMETER` on them, may change for its own session. After `SET pgaudit.log = 'none'; SET pgaudit.role = '';`
+the statements above, and any `UPDATE` or `DELETE` on an audit table, write no `AUDIT` line. On a local PostgreSQL
+16.15 with pgaudit 16.0, a superuser session ran `DISABLE TRIGGER`, `CREATE OR REPLACE FUNCTION`, `TRUNCATE` and
+`UPDATE` that way with 0 `AUDIT` lines. So did a
 `NOSUPERUSER` owner role after `GRANT SET ON PARAMETER pgaudit.log, pgaudit.role TO <owner>` (`DISABLE TRIGGER`,
 `TRUNCATE`, `UPDATE`: 0 lines; the `GRANT` itself was logged once, class `ROLE`, which the alarm above matches
 outside a migration window). Without that grant the owner role got `permission denied to set parameter
@@ -194,6 +194,13 @@ and `UPDATE` wrote 0 `AUDIT` lines after `SET log_min_messages = 'fatal';`, and 
 is a member of `rds_superuser`, not a superuser; drill check 10 records which of these settings it can change. Such
 settings are not limited to the ones named here, so treat the master user as able to get past the trigger without a
 log line whatever that check shows: the compensating control below is the gate, not the check.
+
+The `SET` that turns logging off is never logged: pgaudit logs a `SET` after it has run, under the values it leaves.
+Adding `misc` (or `misc_set`) to `pgaudit_log_classes` therefore does not catch this bypass. Locally, with
+`pgaudit.log = ddl,role,misc` (also `all`, or `ddl,role,misc_set`), `SET pgaudit.log = 'none'` and everything after
+it wrote no line, and neither `SET log_min_messages = 'fatal'` nor `SET pgaudit.log_level = 'debug5'` was logged.
+Only a `SET` made before the one that turns logging off, such as `SET pgaudit.role = ''` or
+`SET pgaudit.log_client = on`, is logged (class `MISC`), and a session can make the switching-off `SET` first.
 
 Compensating control, a pre-production gate owned by platform delivery. This module creates the master credential as
 an RDS-managed secret (`manage_master_user_password`, output `master_user_secret_arn`) and builds neither

@@ -143,8 +143,8 @@ run "partitioned_audit_tables" {
 }
 
 # pgaudit.log and pgaudit.role are superuser-only settings (on PostgreSQL 16
-# also settable by a role granted SET ON PARAMETER on them), and SET is class
-# MISC (not in ddl,role). Checked on a local PostgreSQL 16.15 with pgaudit:
+# also settable by a role granted SET ON PARAMETER on them), and the SET that
+# turns logging off is not logged. Checked on a local PostgreSQL 16.15 with pgaudit:
 # after SET pgaudit.log = 'none'; SET pgaudit.role = ''; a superuser session's
 # DISABLE TRIGGER, CREATE OR REPLACE FUNCTION, TRUNCATE and UPDATE wrote 0
 # AUDIT lines, while the owner role got permission denied to set parameter and
@@ -304,5 +304,30 @@ run "drill_verifies_owner_cannot_turn_off_audit" {
   assert {
     condition     = strcontains(file("${path.module}/README.md"), "The schema owner is meant to be such a role; drill check 10 checks it.")
     error_message = "README: say that drill check 10 checks that the schema owner cannot turn off its own audit logging."
+  }
+}
+
+# "SET is class MISC, which ddl,role does not log" suggested that adding misc
+# would catch the bypass. It does not: pgaudit logs a SET after it has run,
+# under the values it leaves. Checked on a local PostgreSQL 16.15 with pgaudit
+# 16.0: with pgaudit.log = ddl,role,misc (or all, or ddl,role,misc_set), SET
+# pgaudit.log = 'none' and everything after it wrote no line; with misc on,
+# SET log_min_messages = 'fatal' and SET pgaudit.log_level = 'debug5' were not
+# logged either, while an earlier SET pgaudit.role = '' or SET
+# pgaudit.log_client = on was (class MISC).
+run "misc_class_does_not_catch_the_set" {
+  command = plan
+
+  assert {
+    condition     = length(regexall("`SET`\\s+is\\s+class\\s+`MISC`,\\s+which\\s+`ddl,role`\\s+does\\s+not\\s+log", file("${path.module}/README.md"))) == 0
+    error_message = "README: do not give 'SET is class MISC, which ddl,role does not log' as the reason: adding misc does not log the SET that turns audit off."
+  }
+
+  assert {
+    condition = alltrue([
+      for needle in ["`misc`", "`misc_set`", "`pgaudit_log_classes`", "is never logged", "does not catch"] :
+      strcontains(one(regex("(?s)\n```\n\nThe default privileges give the runtime role(.*?)\n## TLS to the database", file("${path.module}/README.md"))), needle)
+    ])
+    error_message = "README: say that the SET that turns audit logging off is never logged, so adding misc or misc_set to pgaudit_log_classes does not catch it."
   }
 }
