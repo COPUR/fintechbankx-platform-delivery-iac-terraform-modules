@@ -88,7 +88,7 @@ Examples: [`examples/aurora-postgresql`](../../examples/aurora-postgresql/main.t
 
 ## Tests
 
-`terraform test` (Terraform >= 1.7, mock AWS provider, no credentials) in [`tests/`](tests): `rds.force_ssl=1`, storage encrypted, deletion protection on, rotating CMK, observability tag; reserved user rejected; JDBC URLs use `sslmode=verify-full` with the mounted CA bundle (`tls_verify_full.tftest.hcl`, `command = apply` against the mock provider); KMS split (`kms_split.tftest.hcl`: storage key untagged, every secret on the secrets key, one key for both rejected); PostgreSQL 16 bootstrap order and `pgaudit.role` (`role_bootstrap.tftest.hcl`, `pgaudit.tftest.hcl`); audit-table convention text (`audit_table_convention.tftest.hcl`: no `TRUNCATE` grant to `rds_pgaudit`, `ENABLE ALWAYS` `BEFORE TRUNCATE` trigger, drill check 10).
+`terraform test` (Terraform >= 1.7, mock AWS provider, no credentials) in [`tests/`](tests): `rds.force_ssl=1`, storage encrypted, deletion protection on, rotating CMK, observability tag; reserved user rejected; JDBC URLs use `sslmode=verify-full` with the mounted CA bundle (`tls_verify_full.tftest.hcl`, `command = apply` against the mock provider); KMS split (`kms_split.tftest.hcl`: storage key untagged, every secret on the secrets key, one key for both rejected); PostgreSQL 16 bootstrap order and `pgaudit.role` (`role_bootstrap.tftest.hcl`, `pgaudit.tftest.hcl`); audit-table convention text (`audit_table_convention.tftest.hcl`: no `TRUNCATE` grant to `rds_pgaudit`, `ENABLE ALWAYS` `BEFORE TRUNCATE` trigger, bypasses through the shared function, partitions, drill checks 4 and 10).
 Run `terraform init -backend=false && terraform test` in this directory; CI runs it through
 `scripts/ci/terraform-validate-all.sh`.
 
@@ -154,13 +154,45 @@ ALTER TABLE <schema>.<audit_table> ENABLE ALWAYS TRIGGER <audit_table>_truncate_
 
 The default privileges give the runtime role `UPDATE, DELETE` (never `TRUNCATE`); the `REVOKE` makes the audit table
 append-only for the pods. The `GRANT` makes any `UPDATE` or `DELETE` that still happens (owner, DBA) an
-`AUDIT: OBJECT` line. The trigger refuses `TRUNCATE` by anyone, the owner and the master user included. `ENABLE ALWAYS`
-makes it fire under `session_replication_role = replica` too, where an ordinary trigger is skipped. Getting past it
-needs `ALTER TABLE ... DISABLE TRIGGER` or `DROP TRIGGER`, both DDL and logged as `AUDIT: SESSION` class `DDL` (the
-default `pgaudit.log` includes `ddl`). Log alarms (CloudWatch metric filters on the `postgresql` log group, owned by
-the observability repository) should match `AUDIT: OBJECT` on the audit tables and `AUDIT: SESSION` lines of class
-`DDL` (and `ROLE`) outside a migration window; an `ALTER TABLE` or `DROP TRIGGER` naming an audit table is the
-`TRUNCATE` precursor to alert on.
+`AUDIT: OBJECT` line. The trigger refuses `TRUNCATE` of the table it is on by anyone, the owner and the master user
+included. `ENABLE ALWAYS` makes it fire under `session_replication_role = replica` too, where an ordinary trigger is
+skipped.
+
+Getting past the trigger takes DDL, and not only DDL that names the audit table:
+
+- `ALTER TABLE ... DISABLE TRIGGER` or `DROP TRIGGER` on the audit table;
+- `CREATE OR REPLACE FUNCTION <schema>.audit_truncate_refused()` with a body that does not raise, or
+  `DROP FUNCTION <schema>.audit_truncate_refused() CASCADE` (which drops every trigger using it). The function is
+  shared by every audit table in the schema, so either statement opens `TRUNCATE` on all of them at once, and it
+  names no audit table;
+- `DROP TABLE` on the audit table or one of its partitions, which removes the rows outright.
+
+All of these are logged as `AUDIT: SESSION` class `DDL` (the default `pgaudit.log` includes `ddl`). Log alarms
+(CloudWatch metric filters on the `postgresql` log group, owned by the observability repository) should match
+`AUDIT: OBJECT` on the audit tables, and any `AUDIT: SESSION` line of class `DDL` (or `ROLE`) outside a migration
+window: that is the `TRUNCATE` precursor to alert on. A filter that matches only statements naming an audit table
+misses the function replacement.
+
+Partitioned audit tables: a statement-level trigger on a partitioned table (or an inheritance parent) is not cloned
+to its partitions, and privileges are per relation, so `TRUNCATE <partition>` by the owner succeeds without any DDL
+and leaves no audit line (session class `WRITE`), and the runtime role keeps the default `UPDATE, DELETE` on an
+existing partition after the `REVOKE` on the parent. Prefer audit tables that are not partitioned and have no
+inheritance children. If one is partitioned, run the `GRANT`, the `REVOKE`, `CREATE TRIGGER` and
+`ENABLE ALWAYS TRIGGER` on every partition too, including partitions created later (in the migration that creates
+each one). This query lists children of an audit table that lack the trigger; it must return no rows:
+
+```sql
+WITH RECURSIVE tree(audit_table, rel) AS (
+  SELECT g.tgrelid, i.inhrelid FROM pg_trigger g JOIN pg_inherits i ON i.inhparent = g.tgrelid
+   WHERE g.tgfoid = '<schema>.audit_truncate_refused()'::regprocedure
+  UNION
+  SELECT t.audit_table, i.inhrelid FROM tree t JOIN pg_inherits i ON i.inhparent = t.rel)
+SELECT audit_table::regclass, rel::regclass AS unguarded_child
+  FROM tree
+ WHERE NOT EXISTS (SELECT 1 FROM pg_trigger c
+                    WHERE c.tgrelid = tree.rel AND c.tgenabled = 'A'
+                      AND c.tgfoid = '<schema>.audit_truncate_refused()'::regprocedure);
+```
 
 ## TLS to the database (verify-full)
 
@@ -220,7 +252,10 @@ the `CREATE EXTENSION pgaudit` line if the local server has no pgaudit. Expected
    privileges) while `CREATE TABLE` in the schema or in `public` and `TRUNCATE` are denied;
 4. after the audit-table convention above, the runtime role can `INSERT` but not `UPDATE` or `TRUNCATE` the audit
    table, and `TRUNCATE` by the owner fails with `TRUNCATE on <schema>.<audit_table> refused: audit table is
-   append-only` (as a local superuser, also after `SET session_replication_role = replica`);
+   append-only` (as a local superuser, also after `SET session_replication_role = replica`). For a partitioned audit
+   table with the trigger on the parent only, `TRUNCATE <partition>` by the owner succeeds and the
+   unguarded-children query above (`pg_inherits`) lists the partition; after the convention is applied to each
+   partition, `TRUNCATE <partition>` is refused and the query returns no rows;
 5. re-running the `rds_pgaudit` `DO` block succeeds.
 
 Two more checks, run as the RDS master user, for services whose migrations need them:
@@ -248,7 +283,11 @@ Checks for the products-catalog history guard, run as the RDS master user on Aur
     - `SET session_replication_role = replica;` then `TRUNCATE <table>;` fails with the same error (the trigger is
       `ENABLE ALWAYS`, `tgenabled = 'A'` in `pg_trigger`); `RESET session_replication_role;` afterwards;
     - `BEGIN; ALTER TABLE <table> DISABLE TRIGGER <table>_truncate_refused; ROLLBACK;` writes an `AUDIT: SESSION` line
-      of class `DDL`, command `ALTER TABLE`, in CloudWatch: the only way past the trigger is DDL, and it is logged.
+      of class `DDL`, command `ALTER TABLE`, in CloudWatch;
+    - `BEGIN; CREATE OR REPLACE FUNCTION <schema>.audit_truncate_refused() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN RETURN NULL; END $$; ROLLBACK;` writes an `AUDIT: SESSION` line of class `DDL`, command
+      `CREATE FUNCTION`, that names no audit table. Every way past the trigger is DDL and logged, but not always as a
+      statement that names the table. Re-apply the original function body afterwards if anything was committed.
 11. The master user can `CREATE EVENT TRIGGER`: expected, it succeeds as `rds_superuser` on Aurora PostgreSQL 16.
 12. No writer membership is left after the master user arms the guard or hands the writer back. The master user is
     not a superuser, so `set_history_writer()` grants it the schema owner and `open_products_catalog_history_writer`

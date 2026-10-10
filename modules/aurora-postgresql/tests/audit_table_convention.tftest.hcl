@@ -83,3 +83,60 @@ run "drill_checks_truncate" {
     error_message = "README Aurora 16 drill check 10 must test TRUNCATE (also under replica) and DISABLE TRIGGER as AUDIT: SESSION DDL."
   }
 }
+
+# The paragraph after the convention SQL block: what the trigger does not
+# cover. Checked on a local PostgreSQL 16.15:
+# - the raise function is shared by every audit table in the schema, so
+#   CREATE OR REPLACE FUNCTION (no-op body) or DROP FUNCTION ... CASCADE lets
+#   TRUNCATE through on all of them with a statement that names no audit table;
+# - a statement-level trigger on a partitioned (or inheritance) parent is not
+#   cloned to its children, so TRUNCATE of a partition succeeds without DDL,
+#   and a REVOKE on the parent does not reach an existing partition either.
+run "truncate_bypasses_named" {
+  command = plan
+
+  assert {
+    condition = alltrue([
+      for needle in [
+        "CREATE OR REPLACE FUNCTION <schema>.audit_truncate_refused()",
+        "DROP FUNCTION <schema>.audit_truncate_refused() CASCADE",
+        "names no audit table",
+        "any `AUDIT: SESSION` line of class `DDL`",
+      ] :
+      strcontains(one(regex("(?s)\n```\n\nThe default privileges give the runtime role(.*?)\n## TLS to the database", file("${path.module}/README.md"))), needle)
+    ])
+    error_message = "README: list replacing or dropping the shared raise function among the TRUNCATE bypasses, and make any DDL line outside a migration window the precursor."
+  }
+
+  assert {
+    condition     = !strcontains(file("${path.module}/README.md"), "naming an audit table is the") && !strcontains(file("${path.module}/README.md"), "Getting past it\nneeds `ALTER TABLE ... DISABLE TRIGGER` or `DROP TRIGGER`") && !strcontains(file("${path.module}/README.md"), "Getting past it needs `ALTER TABLE ... DISABLE TRIGGER` or `DROP TRIGGER`")
+    error_message = "README: ALTER TABLE / DROP TRIGGER naming an audit table is not the only TRUNCATE precursor."
+  }
+}
+
+run "partitioned_audit_tables" {
+  command = plan
+
+  assert {
+    condition = alltrue([
+      for needle in ["partition", "not cloned", "created later", "pg_inherits"] :
+      strcontains(one(regex("(?s)\n```\n\nThe default privileges give the runtime role(.*?)\n## TLS to the database", file("${path.module}/README.md"))), needle)
+    ])
+    error_message = "README: a partitioned audit table needs the REVOKE, GRANT and trigger on every partition (statement triggers are not cloned), with a pg_inherits query that finds unguarded children."
+  }
+
+  # Offline drill check 4 covers the partition case.
+  assert {
+    condition = alltrue([
+      for needle in ["partition", "pg_inherits", "no rows"] :
+      strcontains(one(regex("(?s)\n4\\. (.*?)\n5\\. ", file("${path.module}/README.md"))), needle)
+    ])
+    error_message = "README Aurora 16 drill check 4 must cover TRUNCATE of a partition and the unguarded-children query."
+  }
+
+  # Aurora drill check 10 shows replacing the shared function as a DDL line.
+  assert {
+    condition     = strcontains(one(regex("(?s)\n10\\. (.*?)\n11\\. ", file("${path.module}/README.md"))), "CREATE OR REPLACE FUNCTION")
+    error_message = "README Aurora 16 drill check 10 must show that replacing the shared raise function is logged as AUDIT: SESSION class DDL."
+  }
+}
