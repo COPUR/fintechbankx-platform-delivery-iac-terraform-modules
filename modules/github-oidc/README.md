@@ -132,6 +132,29 @@ PUT /repos/<org>/<repo>/actions/oidc/customization/sub
 A caller pinning the workflows by SHA (`@<sha> # v1.0.0`) presents `job_workflow_ref ...@<sha>`, not the tag, so
 list those release SHAs in `platform_workflow_refs`. Protect the release tags with a tag ruleset.
 
+### Rollout (off by default)
+
+`bind_platform_workflow_ref` defaults to `false` and stays off until every precondition below holds. Switching it on
+before them breaks CI: a role then trusts only a `sub` the repositories do not present yet.
+
+1. `fintechbankx-platform-delivery-iac-cicd-templates` publishes release tags (`refs/tags/v*`) of
+   `container-image.yml`, `helm-deploy.yml` and `terraform.yml`, protected by a tag ruleset (owner: the
+   cicd-templates maintainers).
+2. Every service repository in the stack's `github_services` calls those workflows at a release tag or at a release
+   SHA listed in `platform_workflow_refs`, never at a branch. The input is one switch for every role of every service
+   in the stack, so one repository still calling `@main` loses its CI roles (owner: each service repository).
+3. Every one of those repositories has the OIDC `sub` customization above (`PUT .../actions/oidc/customization/sub`,
+   repository admin or organization admin). The customization is per repository and changes the `sub` of every job
+   in it, for every environment. Roles that are not bound yet still expect the plain `sub` and stop matching, so the
+   customization and the switch go together: apply `bind_platform_workflow_ref = true` to every environment's
+   `stacks/platform` in the same change window as the customization (dev first in that window, then staging and
+   prod), and check one `ecr-push`, `deploy`, `tf-plan` and `tf-apply` job per environment afterwards.
+
+Who switches it on: the platform delivery team, which owns `stacks/platform` and its per-environment tfvars, sets
+`bind_platform_workflow_ref = true` (and `platform_workflow_refs` if callers pin SHAs) in a reviewed change once
+1 and 2 are confirmed, and coordinates step 3 with the repository or organization admins. Rollback, also in one
+change window: set the input back to `false` and reset the customization (`{"use_default": true}`).
+
 What the binding protects, per role kind (it is applied to all four):
 
 | Role | Bound workflow | What the binding guarantees | What else it relies on |

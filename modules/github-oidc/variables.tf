@@ -157,7 +157,7 @@ variable "tags" {
 
 variable "bind_platform_workflow_ref" {
   type        = bool
-  description = "Trust each CI role only from the platform's own reusable workflow (ecr-push: container-image.yml, deploy: helm-deploy.yml, tf-plan/tf-apply: terraform.yml) at platform_workflow_refs. Needs every service repository's OIDC sub claim customized to include job_workflow_ref (include_claim_keys [\"repo\", \"context\", \"job_workflow_ref\"]); set both together, since the customized sub applies to every job in the repository."
+  description = "Trust each CI role only from the platform's own reusable workflow (ecr-push: container-image.yml, deploy: helm-deploy.yml, tf-plan/tf-apply: terraform.yml) at platform_workflow_refs. Needs every service repository's OIDC sub claim customized to include job_workflow_ref (include_claim_keys [\"repo\", \"context\", \"job_workflow_ref\"]); set both together, since the customized sub applies to every job in the repository. Off by default until the rollout preconditions in the README (\"Rollout\") hold: cicd-templates release tags, callers pinned to them, sub customization in every service repository."
   default     = false
 }
 
