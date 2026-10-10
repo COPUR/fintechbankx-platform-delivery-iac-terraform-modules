@@ -48,8 +48,9 @@ locals {
     "REVOKE ${var.migration_role_name} FROM CURRENT_USER;",
     ], var.pgaudit_enabled ? [
     "CREATE EXTENSION IF NOT EXISTS pgaudit;",
-    # Object audit role (pgaudit.role): statements on objects this role holds
-    # privileges on are logged as AUDIT: OBJECT. It may already exist.
+    # Object audit role (pgaudit.role): SELECT/INSERT/UPDATE/DELETE on objects
+    # this role holds that privilege on are logged as AUDIT: OBJECT (TRUNCATE
+    # is not). It may already exist.
     "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${var.pgaudit_role}') THEN CREATE ROLE ${var.pgaudit_role} NOLOGIN; END IF; END $$;",
   ] : ["-- pgaudit disabled (pgaudit_enabled = false)"], [""])) : null
 }
@@ -153,8 +154,9 @@ resource "aws_rds_cluster_parameter_group" "this" {
     }
   }
 
-  # Object audit: any statement on an object pgaudit_role has a privilege on
-  # is logged as AUDIT: OBJECT (README "Audit logging").
+  # Object audit: SELECT, INSERT, UPDATE and DELETE on an object pgaudit_role
+  # has that privilege on are logged as AUDIT: OBJECT; TRUNCATE is not
+  # object-audited (README "Audit logging": audit tables refuse it by trigger).
   dynamic "parameter" {
     for_each = var.pgaudit_enabled ? [1] : []
     content {

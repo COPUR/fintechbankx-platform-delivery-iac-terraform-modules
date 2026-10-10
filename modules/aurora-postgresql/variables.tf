@@ -272,7 +272,7 @@ variable "pgaudit_log_classes" {
 
 variable "pgaudit_role" {
   type        = string
-  description = "pgaudit.role: object-audit role. Statements on objects this role has a privilege on are logged as AUDIT: OBJECT; the migration grants it UPDATE, DELETE, TRUNCATE on the audit tables (README \"Audit logging\"). role_bootstrap_sql creates it if missing."
+  description = "pgaudit.role: object-audit role. SELECT, INSERT, UPDATE and DELETE on objects this role has that privilege on are logged as AUDIT: OBJECT; TRUNCATE is not object-audited. The migration grants it UPDATE, DELETE on the audit tables and refuses TRUNCATE there with an ENABLE ALWAYS BEFORE TRUNCATE trigger (README \"Audit logging\"). role_bootstrap_sql creates it if missing."
   default     = "rds_pgaudit"
 
   validation {
