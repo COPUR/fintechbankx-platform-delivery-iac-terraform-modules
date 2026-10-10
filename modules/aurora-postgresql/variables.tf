@@ -255,7 +255,7 @@ variable "migration_role_name" {
 
 variable "pgaudit_enabled" {
   type        = bool
-  description = "Preload pgaudit (shared_preload_libraries) and set pgaudit.log. Static parameter: enabling it on an existing cluster needs a reboot."
+  description = "Preload pgaudit (shared_preload_libraries = pg_stat_statements,pgaudit, keeping the Aurora default) and set pgaudit.log. Static parameter: enabling it on an existing cluster needs a reboot."
   default     = true
 }
 

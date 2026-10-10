@@ -22,6 +22,18 @@ run "pgaudit_on_by_default" {
     error_message = "shared_preload_libraries must include pgaudit."
   }
 
+  # Setting the parameter replaces the Aurora default (pg_stat_statements), so
+  # the module must keep it next to pgaudit: query statistics stay available.
+  assert {
+    condition     = one([for p in aws_rds_cluster_parameter_group.this.parameter : p.value if p.name == "shared_preload_libraries"]) == "pg_stat_statements,pgaudit"
+    error_message = "shared_preload_libraries must be pg_stat_statements,pgaudit (keep the Aurora default pg_stat_statements)."
+  }
+
+  assert {
+    condition     = contains(split(",", one([for p in aws_rds_cluster_parameter_group.this.parameter : p.value if p.name == "shared_preload_libraries"])), "pg_stat_statements")
+    error_message = "shared_preload_libraries must include pg_stat_statements."
+  }
+
   assert {
     condition     = one([for p in aws_rds_cluster_parameter_group.this.parameter : p.apply_method if p.name == "shared_preload_libraries"]) == "pending-reboot"
     error_message = "shared_preload_libraries is static: apply_method pending-reboot."

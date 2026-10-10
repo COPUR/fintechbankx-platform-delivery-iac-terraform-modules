@@ -134,12 +134,13 @@ resource "aws_rds_cluster_parameter_group" "this" {
 
   # pgaudit: DDL and role/grant changes are audit evidence (schema changes by
   # the migration role, grants to the runtime role). shared_preload_libraries
-  # is static: on an existing cluster it takes effect after a reboot.
+  # is static: on an existing cluster it takes effect after a reboot. Setting
+  # it replaces the Aurora default (pg_stat_statements), so keep that first.
   dynamic "parameter" {
     for_each = var.pgaudit_enabled ? [1] : []
     content {
       name         = "shared_preload_libraries"
-      value        = "pgaudit"
+      value        = "pg_stat_statements,pgaudit"
       apply_method = "pending-reboot"
     }
   }

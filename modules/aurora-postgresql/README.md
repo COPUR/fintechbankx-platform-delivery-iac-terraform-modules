@@ -112,7 +112,8 @@ next apply, which needs a planned change window.
 
 ## Audit logging (pgaudit)
 
-The cluster parameter group preloads `pgaudit` (`shared_preload_libraries`, `apply_method = pending-reboot`) and sets
+The cluster parameter group preloads `pg_stat_statements,pgaudit` (`shared_preload_libraries`, `apply_method =
+pending-reboot`; setting the parameter replaces the Aurora default, so `pg_stat_statements` is kept) and sets
 `pgaudit.log = ddl,role` by default, so schema changes (Flyway as the owner role) and role or grant changes reach the
 `postgresql` log export in CloudWatch. No cluster is deployed yet, so the default costs nothing now; **enabling it on an
 existing cluster needs a reboot of every instance** before `shared_preload_libraries` takes effect. Statement classes
