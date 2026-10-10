@@ -32,6 +32,7 @@ Examples: [`examples/irsa-role`](../../examples/irsa-role/main.tf).
 | `service_accounts` | `list(...)` | required | Service accounts allowed to assume the role. Normally exactly one. |
 | `policy_arns` | `map(string)` | `{}` | Managed policies to attach, keyed by a stable name (e.g. { runtime = module.service_base.runtime_access_policy_arn }). |
 | `inline_policy_json` | `string` | `null` | Optional inline policy document. |
+| `attach_inline_policy` | `bool` | `null` | Attach `inline_policy_json`; set it (`true`) when the JSON references resources of the same plan, so the count is known at plan time. `null` derives it from `inline_policy_json != null`. |
 | `max_session_duration` | `number` | `3600` | Maximum session duration in seconds. |
 | `permissions_boundary_arn` | `string` | `null` | Optional permissions boundary. |
 | `tags` | `map(string)` | `{}` | Resource tags. |

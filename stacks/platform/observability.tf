@@ -139,11 +139,11 @@ data "aws_iam_policy_document" "obs_yace" {
 module "observability_irsa" {
   source = "../../modules/irsa-role"
   for_each = {
-    prometheus   = { policy_arns = { amp_remote_write = module.observability.remote_write_policy_arn }, inline = null }
-    otel-gateway = { policy_arns = { amp_remote_write = module.observability.remote_write_policy_arn }, inline = null }
-    tempo        = { policy_arns = {}, inline = data.aws_iam_policy_document.obs_storage["tempo"].json }
-    loki         = { policy_arns = {}, inline = data.aws_iam_policy_document.obs_storage["loki"].json }
-    yace         = { policy_arns = {}, inline = data.aws_iam_policy_document.obs_yace.json }
+    prometheus   = { policy_arns = { amp_remote_write = module.observability.remote_write_policy_arn }, inline = null, attach_inline = false }
+    otel-gateway = { policy_arns = { amp_remote_write = module.observability.remote_write_policy_arn }, inline = null, attach_inline = false }
+    tempo        = { policy_arns = {}, inline = data.aws_iam_policy_document.obs_storage["tempo"].json, attach_inline = true }
+    loki         = { policy_arns = {}, inline = data.aws_iam_policy_document.obs_storage["loki"].json, attach_inline = true }
+    yace         = { policy_arns = {}, inline = data.aws_iam_policy_document.obs_yace.json, attach_inline = true }
   }
 
   role_name          = "${module.eks.cluster_name}-obs-${each.key}"
@@ -153,7 +153,10 @@ module "observability_irsa" {
   service_accounts   = [{ namespace = "observability", name = each.key }]
   policy_arns        = each.value.policy_arns
   inline_policy_json = each.value.inline
-  tags               = local.tags
+  # Known at plan: the tempo/loki JSON references buckets and a key created in
+  # the same plan, so the count cannot be derived from it on a first plan.
+  attach_inline_policy = each.value.attach_inline
+  tags                 = local.tags
 }
 
 module "grafana_db" {

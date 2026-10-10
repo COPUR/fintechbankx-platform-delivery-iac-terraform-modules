@@ -44,7 +44,7 @@ resource "aws_iam_role_policy_attachment" "managed" {
 }
 
 resource "aws_iam_role_policy" "inline" {
-  count  = var.inline_policy_json == null ? 0 : 1
+  count  = (var.attach_inline_policy != null ? var.attach_inline_policy : var.inline_policy_json != null) ? 1 : 0
   name   = "${var.role_name}-inline"
   role   = aws_iam_role.this.id
   policy = var.inline_policy_json

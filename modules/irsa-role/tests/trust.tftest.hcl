@@ -46,3 +46,32 @@ run "wildcard_service_account_rejected" {
 
   expect_failures = [var.service_accounts]
 }
+
+# The inline policy count must not depend on the policy JSON when the caller
+# says whether to attach it (the JSON may be unknown until apply).
+run "explicit_attach_flag_decides_the_inline_policy" {
+  command = plan
+
+  variables {
+    inline_policy_json   = "{\"Version\":\"2012-10-17\",\"Statement\":[]}"
+    attach_inline_policy = false
+  }
+
+  assert {
+    condition     = length(aws_iam_role_policy.inline) == 0
+    error_message = "attach_inline_policy = false attaches nothing."
+  }
+}
+
+run "inline_policy_derived_without_flag" {
+  command = plan
+
+  variables {
+    inline_policy_json = "{\"Version\":\"2012-10-17\",\"Statement\":[]}"
+  }
+
+  assert {
+    condition     = length(aws_iam_role_policy.inline) == 1
+    error_message = "Without the flag a non-null inline_policy_json is attached."
+  }
+}

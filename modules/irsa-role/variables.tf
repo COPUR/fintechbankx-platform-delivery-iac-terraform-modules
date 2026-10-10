@@ -54,6 +54,12 @@ variable "inline_policy_json" {
   default     = null
 }
 
+variable "attach_inline_policy" {
+  type        = bool
+  description = "Whether inline_policy_json is attached. Set it when the JSON is only known after apply (it references resources created in the same plan): the instance count cannot depend on an unknown value. null derives it from inline_policy_json != null."
+  default     = null
+}
+
 variable "max_session_duration" {
   type        = number
   description = "Maximum session duration in seconds."
