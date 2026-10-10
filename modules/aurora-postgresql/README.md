@@ -56,7 +56,7 @@ Examples: [`examples/aurora-postgresql`](../../examples/aurora-postgresql/main.t
 | `connections_alarm_threshold` | `number` | `100` | DatabaseConnections alarm threshold. |
 | `tags` | `map(string)` | `{}` | Resource tags. |
 | `observability_discovery` | `bool` | `true` | Tag resources fintechbankx.io/observability=enabled so the YACE CloudWatch exporter discovers them. |
-| `pgaudit_enabled` | `bool` | `true` | Preload `pgaudit` and set `pgaudit.log`. |
+| `pgaudit_enabled` | `bool` | `true` | Preload `pgaudit` next to the Aurora default (`shared_preload_libraries = pg_stat_statements,pgaudit`) and set `pgaudit.log`. Static: enabling it on an existing cluster needs a reboot. |
 | `pgaudit_log_classes` | `list(string)` | `["ddl", "role"]` | `pgaudit.log` classes. |
 | `pgaudit_role` | `string` | `"rds_pgaudit"` | `pgaudit.role` (object audit); created by `role_bootstrap_sql` if missing. |
 | `schema_name` | `string` | `null` | Service schema `sc_<ctx>_<cap>`; with the two role names renders `role_bootstrap_sql`. |
