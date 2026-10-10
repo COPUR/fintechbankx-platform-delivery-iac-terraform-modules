@@ -45,7 +45,8 @@ Examples: [`examples/elasticache-redis`](../../examples/elasticache-redis/main.t
 | `subnet_ids` | `list(string)` | required | Private subnets in at least two AZs. |
 | `allowed_security_group_ids` | `list(string)` | required | Security groups allowed to connect on 6379. |
 | `user_group_ids` | `list(string)` | `[]` | ElastiCache RBAC user group ids when auth_mode = rbac (users managed outside this module). |
-| `kms_key_arn` | `string` | `null` | Existing KMS key. null creates one. |
+| `kms_key_arn` | `string` | `null` | Storage key override (at rest, snapshots); must not carry `fintechbankx.io/secrets`. null creates `<name>-redis-storage`. |
+| `secrets_kms_key_arn` | `string` | `null` | Secrets key override (connection secret `<env>/<slug>/redis`), tagged `fintechbankx.io/secrets=true`, different from `kms_key_arn`. null creates `<name>-redis-secrets`. |
 | `snapshot_retention_days` | `number` | `7` | Daily snapshot retention (0 disables). |
 | `log_retention_days` | `number` | `30` | CloudWatch retention for slow and engine logs. |
 | `tags` | `map(string)` | `{}` | Resource tags. |
@@ -58,6 +59,15 @@ Examples: [`examples/elasticache-redis`](../../examples/elasticache-redis/main.t
 | `reader_endpoint` | Reader endpoint. |
 | `configuration_endpoint` | Configuration endpoint (cluster mode only). |
 | `security_group_id` | Redis security group. |
-| `kms_key_arn` | Encryption-at-rest key. |
+| `kms_key_arn` | Storage key (ADR-023): at rest and snapshots. |
+| `secrets_kms_key_arn` | Secrets key (ADR-023) of the connection secret. |
 | `secret_name` | Connection secret <env>/<slug>/redis (ExternalSecret remote key). |
 | `secret_arn` | Connection secret ARN. |
+
+## Encryption keys (ADR-023)
+
+Two rotating keys: `<name>-redis-storage` (at-rest encryption and snapshots, not tagged `fintechbankx.io/secrets`, so
+the External Secrets roles cannot use it) and `<name>-redis-secrets` (the connection secret, tagged
+`fintechbankx.io/secrets=true`). `tests/kms_split.tftest.hcl` (mock providers) pins the split and rejects one key for
+both. Before this change the module used one tagged key for both; changing the at-rest key of an existing replication
+group replaces it, so an existing deployment keeps its key through `kms_key_arn`.

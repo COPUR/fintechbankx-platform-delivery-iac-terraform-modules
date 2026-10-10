@@ -47,7 +47,8 @@ Examples: [`examples/documentdb-cluster`](../../examples/documentdb-cluster/main
 | `vpc_id` | `string` | required | VPC id. |
 | `subnet_ids` | `list(string)` | required | Private subnets in at least two AZs (three recommended). |
 | `allowed_security_group_ids` | `list(string)` | required | Security groups allowed on 27017. |
-| `kms_key_arn` | `string` | `null` | Existing KMS key (tag it fintechbankx.io/secrets=true). null creates one. |
+| `kms_key_arn` | `string` | `null` | Storage key override (cluster storage, snapshots); must not carry `fintechbankx.io/secrets`. null creates `<name>-docdb-storage`. |
+| `secrets_kms_key_arn` | `string` | `null` | Secrets key override (`docdb-master`, `docdb-app`), tagged `fintechbankx.io/secrets=true`, different from `kms_key_arn`. null creates `<name>-docdb-secrets`. |
 | `backup_retention_days` | `number` | `35` | Backup retention / PITR window. |
 | `deletion_protection` | `bool` | `true` | Protect the cluster from deletion. |
 | `profiler_threshold_ms` | `number` | `200` | Profile operations slower than this. |
@@ -65,7 +66,16 @@ Examples: [`examples/documentdb-cluster`](../../examples/documentdb-cluster/main
 | `port` | Port. |
 | `connection_options` | Driver options the app must use (TLS with the RDS CA bundle, no retryable writes on DocumentDB). |
 | `security_group_id` | Cluster security group. |
-| `kms_key_arn` | KMS key (grant kms:Decrypt to readers of the app secret). |
+| `kms_key_arn` | Storage key (ADR-023). Not for secrets. |
+| `secrets_kms_key_arn` | Secrets key (ADR-023) of `docdb-master` and `docdb-app` (grant `kms:Decrypt` via Secrets Manager to readers of the app secret). |
 | `app_secret_name` | Application credential secret, <env>/<slug>/docdb-app (ExternalSecret remote key). |
 | `app_secret_arn` | Application credential secret ARN. |
 | `master_secret_arn` | Admin credential, for the DBA bootstrap only. |
+
+## Encryption keys (ADR-023)
+
+Two rotating keys: `<name>-docdb-storage` (cluster storage and snapshots, not tagged `fintechbankx.io/secrets`, so the
+External Secrets roles cannot use it) and `<name>-docdb-secrets` (both Secrets Manager secrets, tagged
+`fintechbankx.io/secrets=true`). `tests/kms_split.tftest.hcl` (mock providers) pins the split and rejects one key for
+both. Before this change the module used one tagged key (`alias/<name>-docdb`); an existing state would replace the
+alias and move the secrets to the new key on the next apply.

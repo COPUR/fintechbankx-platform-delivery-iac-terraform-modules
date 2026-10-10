@@ -89,7 +89,13 @@ variable "allowed_security_group_ids" {
 
 variable "kms_key_arn" {
   type        = string
-  description = "Existing KMS key. null creates a dedicated key with rotation."
+  description = "Storage key override (ADR-023): cluster storage, snapshots and Performance Insights. Must not be tagged fintechbankx.io/secrets. null creates <name>-db-storage with rotation."
+  default     = null
+}
+
+variable "secrets_kms_key_arn" {
+  type        = string
+  description = "Secrets key override (ADR-023): the RDS-managed master secret, db-app and db-migration. Tag it fintechbankx.io/secrets=true so External Secrets can decrypt through Secrets Manager. Must differ from kms_key_arn. null creates <name>-db-secrets with rotation."
   default     = null
 }
 
@@ -261,5 +267,16 @@ variable "pgaudit_log_classes" {
   validation {
     condition     = length(var.pgaudit_log_classes) > 0 && alltrue([for c in var.pgaudit_log_classes : contains(["read", "write", "function", "role", "ddl", "misc", "misc_set", "all"], c)])
     error_message = "pgaudit_log_classes entries must be pgaudit classes: read, write, function, role, ddl, misc, misc_set, all."
+  }
+}
+
+variable "pgaudit_role" {
+  type        = string
+  description = "pgaudit.role: object-audit role. Statements on objects this role has a privilege on are logged as AUDIT: OBJECT; the migration grants it UPDATE, DELETE, TRUNCATE on the audit tables (README \"Audit logging\"). role_bootstrap_sql creates it if missing."
+  default     = "rds_pgaudit"
+
+  validation {
+    condition     = can(regex("^[a-z][a-z0-9_]{1,62}$", var.pgaudit_role))
+    error_message = "pgaudit_role must be a lower-case PostgreSQL identifier."
   }
 }

@@ -33,6 +33,11 @@ run "pgaudit_on_by_default" {
   }
 
   assert {
+    condition     = one([for p in aws_rds_cluster_parameter_group.this.parameter : p.value if p.name == "pgaudit.role"]) == "rds_pgaudit"
+    error_message = "pgaudit.role must be rds_pgaudit (object audit of the audit tables)."
+  }
+
+  assert {
     condition     = local.roles_named == false
     error_message = "Without role names no bootstrap SQL is rendered."
   }
@@ -64,7 +69,7 @@ run "pgaudit_can_be_disabled" {
   }
 
   assert {
-    condition     = length([for p in aws_rds_cluster_parameter_group.this.parameter : p if p.name == "shared_preload_libraries" || p.name == "pgaudit.log"]) == 0
+    condition     = length([for p in aws_rds_cluster_parameter_group.this.parameter : p if p.name == "shared_preload_libraries" || startswith(p.name, "pgaudit.")]) == 0
     error_message = "With pgaudit_enabled = false no pgaudit parameter is set."
   }
 }

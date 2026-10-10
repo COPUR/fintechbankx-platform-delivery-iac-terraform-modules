@@ -19,8 +19,13 @@ output "security_group_id" {
 }
 
 output "kms_key_arn" {
-  description = "Encryption-at-rest key."
+  description = "Storage key (ADR-023): at-rest encryption and snapshots. Not for secrets."
   value       = local.kms_key_arn
+}
+
+output "secrets_kms_key_arn" {
+  description = "Secrets key (ADR-023, tagged fintechbankx.io/secrets=true) of the connection secret."
+  value       = local.secrets_kms_key_arn
 }
 
 output "secret_name" {

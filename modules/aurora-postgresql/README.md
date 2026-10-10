@@ -4,7 +4,7 @@ Status: **Proposed** (validated with `terraform validate`; not applied anywhere)
 
 Aurora PostgreSQL Serverless v2 owned by exactly one service (database per
 service). Generalises what loan-lifecycle-core's deploy/terraform does
-inline: dedicated KMS key, rds.force_ssl, subnet group across AZs, a
+inline: dedicated KMS keys (storage and secrets, ADR-023), rds.force_ssl, subnet group across AZs, a
 security group that only admits the workload security group(s), an
 RDS-managed admin credential, an application credential secret container
 (value written by the DBA bootstrap, never by Terraform) and alarms.
@@ -40,7 +40,8 @@ Examples: [`examples/aurora-postgresql`](../../examples/aurora-postgresql/main.t
 | `vpc_id` | `string` | required | VPC id. |
 | `subnet_ids` | `list(string)` | required | Private or intra subnets in at least two AZs. |
 | `allowed_security_group_ids` | `list(string)` | required | Security groups allowed to connect on 5432 (EKS cluster/node or pod security group). |
-| `kms_key_arn` | `string` | `null` | Existing KMS key. null creates a dedicated key with rotation. |
+| `kms_key_arn` | `string` | `null` | Storage key override (cluster storage, snapshots, Performance Insights); must not carry `fintechbankx.io/secrets`. null creates `<name>-db-storage`. |
+| `secrets_kms_key_arn` | `string` | `null` | Secrets key override (master, db-app, db-migration secrets), tagged `fintechbankx.io/secrets=true`, different from `kms_key_arn`. null creates `<name>-db-secrets`. |
 | `iam_database_authentication_enabled` | `bool` | `true` | Enable IAM database authentication. |
 | `backup_retention_days` | `number` | `35` | Automated backup retention (PITR window). |
 | `preferred_backup_window` | `string` | `"01:00-02:00"` | Daily backup window (UTC). |
@@ -57,6 +58,7 @@ Examples: [`examples/aurora-postgresql`](../../examples/aurora-postgresql/main.t
 | `observability_discovery` | `bool` | `true` | Tag resources fintechbankx.io/observability=enabled so the YACE CloudWatch exporter discovers them. |
 | `pgaudit_enabled` | `bool` | `true` | Preload `pgaudit` and set `pgaudit.log`. |
 | `pgaudit_log_classes` | `list(string)` | `["ddl", "role"]` | `pgaudit.log` classes. |
+| `pgaudit_role` | `string` | `"rds_pgaudit"` | `pgaudit.role` (object audit); created by `role_bootstrap_sql` if missing. |
 | `schema_name` | `string` | `null` | Service schema `sc_<ctx>_<cap>`; with the two role names renders `role_bootstrap_sql`. |
 | `app_role_name` | `string` | `null` | Runtime role (pods): `USAGE` + DML only. |
 | `migration_role_name` | `string` | `null` | Schema-owner role (Flyway only); must differ from `app_role_name`. |
@@ -78,16 +80,35 @@ Examples: [`examples/aurora-postgresql`](../../examples/aurora-postgresql/main.t
 | `migration_secret_arn` / `migration_secret_name` | Schema-owner (Flyway) credential secret. |
 | `role_bootstrap_sql` | DBA bootstrap SQL of the two-role pattern, or null. |
 | `security_group_id` | Database security group. |
-| `kms_key_arn` | KMS key protecting storage and credentials (grant kms:Decrypt to the workload). |
+| `kms_key_arn` | Storage key (ADR-023). Workloads never need it. |
+| `secrets_kms_key_arn` | Secrets key (ADR-023) of every Secrets Manager secret of the database; pass it to `operator-db-access` `kms_key_arns` (stack variable `operator_db_import_kms_key_arns`). |
 | `app_secret_arn` | Application credential secret ARN. |
 | `app_secret_name` | Application credential secret name (Helm value externalSecret.remoteSecretName). |
 | `master_user_secret_arn` | RDS-managed admin credential, for the DBA bootstrap only. |
 
 ## Tests
 
-`terraform test` (Terraform >= 1.7, mock AWS provider, no credentials) in [`tests/`](tests): `rds.force_ssl=1`, storage encrypted, deletion protection on, rotating CMK, observability tag; reserved user rejected; JDBC URLs use `sslmode=verify-full` with the mounted CA bundle (`tls_verify_full.tftest.hcl`, `command = apply` against the mock provider).
+`terraform test` (Terraform >= 1.7, mock AWS provider, no credentials) in [`tests/`](tests): `rds.force_ssl=1`, storage encrypted, deletion protection on, rotating CMK, observability tag; reserved user rejected; JDBC URLs use `sslmode=verify-full` with the mounted CA bundle (`tls_verify_full.tftest.hcl`, `command = apply` against the mock provider); KMS split (`kms_split.tftest.hcl`: storage key untagged, every secret on the secrets key, one key for both rejected); PostgreSQL 16 bootstrap order and `pgaudit.role` (`role_bootstrap.tftest.hcl`, `pgaudit.tftest.hcl`).
 Run `terraform init -backend=false && terraform test` in this directory; CI runs it through
 `scripts/ci/terraform-validate-all.sh`.
+
+## Encryption keys (ADR-023)
+
+Two rotating customer managed keys per database:
+
+| Key (alias) | Encrypts | Tag `fintechbankx.io/secrets` | Override |
+|---|---|---|---|
+| `<name>-db-storage` | cluster storage, snapshots, Performance Insights | no | `kms_key_arn` |
+| `<name>-db-secrets` | RDS-managed master secret, `db-app`, `db-migration` (and the operator `db-import` secret through `operator-db-access`) | `true` | `secrets_kms_key_arn` |
+
+The External Secrets roles may decrypt only with keys tagged `fintechbankx.io/secrets=true` and only through Secrets
+Manager, so they can read the credential secrets they are allowed to read but never use the storage key. Neither key
+policy names External Secrets (default key policy: the account administers the key, IAM grants use). Outputs
+`kms_key_arn` (storage) and `secrets_kms_key_arn`. Passing the same ARN for both is rejected.
+
+Migration note: before this split the module created one tagged key (`alias/<name>-db`) for both. No cluster is
+deployed from this module yet; an existing state would replace the alias and move the secrets to the new key on the
+next apply, which needs a planned change window.
 
 ## Audit logging (pgaudit)
 
@@ -97,6 +118,23 @@ The cluster parameter group preloads `pgaudit` (`shared_preload_libraries`, `app
 existing cluster needs a reboot of every instance** before `shared_preload_libraries` takes effect. Statement classes
 are configurable (`pgaudit_log_classes`); `read`/`write` log data access and can include personal data in statements.
 Register the extension once per database (`CREATE EXTENSION pgaudit;`) as part of the DBA bootstrap.
+
+Object audit: the parameter group sets `pgaudit.role = rds_pgaudit` (`pgaudit_role`), and `role_bootstrap_sql` creates
+that role if it does not exist (an idempotent `DO` block). pgaudit then logs every statement on an object
+`rds_pgaudit` holds a privilege on, as `AUDIT: OBJECT`, independently of `pgaudit.log`.
+
+Migration convention for audit tables (Flyway, as the owner role, in the migration that creates the table):
+
+```sql
+GRANT UPDATE, DELETE, TRUNCATE ON <schema>.<audit_table> TO rds_pgaudit;   -- object audit of any change
+REVOKE UPDATE, DELETE ON <schema>.<audit_table> FROM <app_role>;           -- runtime role: INSERT and SELECT only
+```
+
+The default privileges give the runtime role `UPDATE, DELETE`; the `REVOKE` makes the audit table append-only for the
+pods, and the `GRANT` makes any `UPDATE`, `DELETE` or `TRUNCATE` that still happens (owner, DBA) an `AUDIT: OBJECT`
+line. Log alarms (CloudWatch metric filters on the `postgresql` log group, owned by the observability repository)
+should match `AUDIT: OBJECT` on the audit tables and `AUDIT: SESSION` lines of class `DDL` (and `ROLE`) outside a
+migration window.
 
 ## TLS to the database (verify-full)
 
@@ -120,7 +158,14 @@ Each service database has two roles, created by the DBA bootstrap:
 roles: the owner role owns `sc_<ctx>_<cap>` and runs Flyway; the runtime role gets `USAGE` on the schema and, through
 `ALTER DEFAULT PRIVILEGES FOR ROLE <owner>`, only `SELECT, INSERT, UPDATE, DELETE` on tables (and `USAGE, SELECT` on
 sequences) that Flyway creates: no DDL, no `TRUNCATE`, no ownership. The SQL carries no password; the DBA sets each
-one with `\password` from its secret. `tests/role_bootstrap.tftest.hcl` pins these grants. Example (request to pay):
+one with `\password` from its secret. `tests/role_bootstrap.tftest.hcl` pins these grants.
+
+On PostgreSQL 16 the RDS admin is a `CREATEROLE` member of `rds_superuser`, not a superuser, and a role it creates is
+granted back to it with `ADMIN` only (no `SET`, no `INHERIT`). The SQL therefore runs
+`GRANT <owner> TO CURRENT_USER WITH SET TRUE, INHERIT FALSE`, `CREATE SCHEMA ... AUTHORIZATION <owner>`,
+`SET ROLE <owner>`, the `GRANT USAGE` and both `ALTER DEFAULT PRIVILEGES`, `RESET ROLE` and
+`REVOKE <owner> FROM CURRENT_USER`: the admin acts as the owner only for those statements and keeps no `SET` membership
+afterwards. Engines before 16 get a plain `GRANT <owner> TO CURRENT_USER` (no `SET` option there). Example (request to pay):
 `schema_name = "sc_pay_request_to_pay"`, `app_role_name = "payment_request_to_pay_app"`,
 `migration_role_name = "payment_request_to_pay_migration"`.
 
@@ -132,3 +177,28 @@ outputs (`sslmode=verify-full`) and mount the RDS CA bundle (section above).
 
 Both secrets hold `{"username", "password"}` and are read through the `aws-secrets-manager` ClusterSecretStore. Keep the owner credential out of the long-running pods: run Flyway as a separate step with the db-migration secret. Both are tagged `fintechbankx.io/value-in-state = false` after `var.tags` is merged, so no caller tag can make them readable by the pull-request `tf-plan` role (`github-oidc`).
 
+
+## Aurora 16 drill (bootstrap)
+
+Run before the first service bootstrap on a new engine major, and after any change to `role_bootstrap_sql`.
+
+Offline, on a local PostgreSQL 16 (what the review of PR #11 used): start a throwaway cluster, create an admin
+`LOGIN CREATEROLE CREATEDB NOSUPERUSER` that owns the service database (as on RDS), render the SQL with
+`terraform console` (`local.role_bootstrap_sql`) and run it as that admin with `psql -v ON_ERROR_STOP=1`. Leave out
+the `CREATE EXTENSION pgaudit` line if the local server has no pgaudit. Expected:
+
+1. the bootstrap completes; the schema owner is the migration role;
+2. `pg_auth_members` shows the admin in the owner role with `admin_option` only (`set_option = false`), and
+   `SET ROLE <owner>` as the admin is denied;
+3. as the owner, `CREATE TABLE` in the schema works; as the runtime role, `INSERT`/`UPDATE` on it work (default
+   privileges) while `CREATE TABLE` in the schema or in `public` and `TRUNCATE` are denied;
+4. after the audit-table convention above, the runtime role can `INSERT` but not `UPDATE` the audit table;
+5. re-running the `rds_pgaudit` `DO` block succeeds.
+
+The SQL from before the PostgreSQL 16 change fails at step 1 with `must be able to SET ROLE "<owner>"`.
+
+On Aurora 16 (dev, once per engine major): the same steps against a scratch database in the dev cluster, connected
+through the operator path (`stacks/platform` README, "Operator database access"); with pgaudit loaded, check that the
+`GRANT`/`REVOKE` lines appear as `AUDIT: SESSION` class `ROLE` and the `CREATE SCHEMA` as class `DDL` in the
+`postgresql` log group, and that an `UPDATE` on an audit table by the owner logs `AUDIT: OBJECT`. Record the run
+(date, engine version, log excerpts without credentials) in the PR or the change record.

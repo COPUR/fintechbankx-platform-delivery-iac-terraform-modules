@@ -97,7 +97,13 @@ variable "user_group_ids" {
 
 variable "kms_key_arn" {
   type        = string
-  description = "Existing KMS key. null creates one."
+  description = "Storage key override (ADR-023): at-rest encryption and snapshots. Must not be tagged fintechbankx.io/secrets. null creates <name>-redis-storage."
+  default     = null
+}
+
+variable "secrets_kms_key_arn" {
+  type        = string
+  description = "Secrets key override (ADR-023): the connection secret <env>/<slug>/redis. Tag it fintechbankx.io/secrets=true. Must differ from kms_key_arn. null creates <name>-redis-secrets."
   default     = null
 }
 

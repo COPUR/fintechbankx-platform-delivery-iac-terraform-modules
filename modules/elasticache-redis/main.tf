@@ -9,19 +9,45 @@
 #  - auth_mode "rbac": ElastiCache RBAC user groups managed outside the module.
 
 locals {
-  name        = var.name != null ? var.name : "${var.environment}-${var.service_slug}"
-  tags        = merge({ ManagedBy = "terraform", Module = "elasticache-redis", Service = var.service_slug }, var.tags)
-  use_token   = var.auth_mode == "token"
-  kms_key_arn = var.kms_key_arn != null ? var.kms_key_arn : aws_kms_key.this[0].arn
-  multi_az    = var.replicas_per_node_group >= 1
+  name      = var.name != null ? var.name : "${var.environment}-${var.service_slug}"
+  tags      = merge({ ManagedBy = "terraform", Module = "elasticache-redis", Service = var.service_slug }, var.tags)
+  use_token = var.auth_mode == "token"
+  # ADR-023 KMS split: storage key and secrets key.
+  kms_key_arn         = var.kms_key_arn != null ? var.kms_key_arn : aws_kms_key.this[0].arn
+  secrets_kms_key_arn = var.secrets_kms_key_arn != null ? var.secrets_kms_key_arn : aws_kms_key.secrets[0].arn
+  multi_az            = var.replicas_per_node_group >= 1
 }
 
+# Storage key (at-rest encryption and snapshots). Not tagged
+# fintechbankx.io/secrets: the External Secrets roles cannot use it.
 resource "aws_kms_key" "this" {
   count                   = var.kms_key_arn == null ? 1 : 0
-  description             = "ElastiCache ${local.name} encryption at rest"
+  description             = "ElastiCache ${local.name} encryption at rest and snapshots"
+  enable_key_rotation     = true
+  deletion_window_in_days = 30
+  tags                    = local.tags
+}
+
+resource "aws_kms_alias" "this" {
+  count         = var.kms_key_arn == null ? 1 : 0
+  name          = "alias/${local.name}-redis-storage"
+  target_key_id = aws_kms_key.this[0].key_id
+}
+
+# Secrets key (connection secret <env>/<slug>/redis). Tagged so External
+# Secrets can decrypt it through Secrets Manager.
+resource "aws_kms_key" "secrets" {
+  count                   = var.secrets_kms_key_arn == null ? 1 : 0
+  description             = "ElastiCache ${local.name} Secrets Manager connection secret"
   enable_key_rotation     = true
   deletion_window_in_days = 30
   tags                    = merge(local.tags, { "fintechbankx.io/secrets" = "true" })
+}
+
+resource "aws_kms_alias" "secrets" {
+  count         = var.secrets_kms_key_arn == null ? 1 : 0
+  name          = "alias/${local.name}-redis-secrets"
+  target_key_id = aws_kms_key.secrets[0].key_id
 }
 
 resource "random_password" "auth" {
@@ -70,6 +96,10 @@ resource "aws_elasticache_replication_group" "this" {
       condition     = var.auth_mode == "token" || length(var.user_group_ids) > 0
       error_message = "auth_mode rbac needs user_group_ids."
     }
+    precondition {
+      condition     = var.kms_key_arn == null || var.secrets_kms_key_arn == null || var.kms_key_arn != var.secrets_kms_key_arn
+      error_message = "kms_key_arn (storage) and secrets_kms_key_arn (secrets) must be different keys (ADR-023)."
+    }
   }
 
   replication_group_id       = "${local.name}-redis"
@@ -111,7 +141,7 @@ resource "aws_elasticache_replication_group" "this" {
 resource "aws_secretsmanager_secret" "redis" {
   name                    = "${var.environment}/${var.service_slug}/redis"
   description             = "Redis connection for ${local.name} (TLS)"
-  kms_key_id              = local.kms_key_arn
+  kms_key_id              = local.secrets_kms_key_arn
   recovery_window_in_days = 7
   # Terraform writes this value, so the tf-plan role may refresh it (github-oidc).
   tags = merge(local.tags, { "fintechbankx.io/value-in-state" = "true" })

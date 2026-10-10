@@ -95,3 +95,39 @@ run "runtime_and_owner_roles_must_differ" {
 
   expect_failures = [var.migration_role_name]
 }
+
+# PostgreSQL 16 (Aurora 16): the RDS admin is CREATEROLE, not superuser. A
+# role it creates is granted back to it with ADMIN only (no SET, no INHERIT),
+# so CREATE SCHEMA ... AUTHORIZATION <owner> and default privileges for the
+# owner fail unless the admin first takes SET on the owner, acts as the owner
+# and gives the membership back (proved on a local PostgreSQL 16, README
+# "Aurora 16 drill").
+run "pg16_createrole_admin_acts_as_owner_then_drops_membership" {
+  command = apply
+
+  assert {
+    condition     = length(regexall("(?s)GRANT payment_request_to_pay_migration TO CURRENT_USER WITH SET TRUE, INHERIT FALSE;.*CREATE SCHEMA IF NOT EXISTS sc_pay_request_to_pay AUTHORIZATION payment_request_to_pay_migration;.*SET ROLE payment_request_to_pay_migration;.*GRANT USAGE ON SCHEMA sc_pay_request_to_pay TO payment_request_to_pay_app;.*ALTER DEFAULT PRIVILEGES FOR ROLE payment_request_to_pay_migration IN SCHEMA sc_pay_request_to_pay GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO payment_request_to_pay_app;.*ALTER DEFAULT PRIVILEGES FOR ROLE payment_request_to_pay_migration IN SCHEMA sc_pay_request_to_pay GRANT USAGE, SELECT ON SEQUENCES TO payment_request_to_pay_app;.*RESET ROLE;.*REVOKE payment_request_to_pay_migration FROM CURRENT_USER;", output.role_bootstrap_sql)) == 1
+    error_message = "Order: GRANT owner TO CURRENT_USER WITH SET TRUE, INHERIT FALSE; CREATE SCHEMA AUTHORIZATION owner; SET ROLE owner; GRANT USAGE; ALTER DEFAULT PRIVILEGES x2; RESET ROLE; REVOKE owner FROM CURRENT_USER."
+  }
+
+  assert {
+    condition     = length(regexall("(?s)REVOKE payment_request_to_pay_migration FROM CURRENT_USER;.*SET ROLE", output.role_bootstrap_sql)) == 0
+    error_message = "The admin keeps no SET membership on the owner after the bootstrap."
+  }
+}
+
+# pgaudit object auditing: pgaudit.role = rds_pgaudit, and the bootstrap
+# creates that role idempotently (it may already exist on the cluster).
+run "pgaudit_object_audit_role_created_idempotently" {
+  command = apply
+
+  assert {
+    condition     = strcontains(output.role_bootstrap_sql, "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'rds_pgaudit') THEN CREATE ROLE rds_pgaudit NOLOGIN; END IF; END $$;")
+    error_message = "The bootstrap creates the pgaudit object-audit role rds_pgaudit if it does not exist."
+  }
+
+  assert {
+    condition     = one([for p in aws_rds_cluster_parameter_group.this.parameter : p.value if p.name == "pgaudit.role"]) == "rds_pgaudit"
+    error_message = "pgaudit.role must be rds_pgaudit."
+  }
+}

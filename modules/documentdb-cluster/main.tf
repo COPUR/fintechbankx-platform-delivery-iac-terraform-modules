@@ -12,24 +12,44 @@
 # credential is generated here and therefore present in (encrypted) state.
 
 locals {
-  name        = var.name != null ? var.name : "${var.environment}-${var.service_slug}"
-  tags        = merge({ ManagedBy = "terraform", Module = "documentdb-cluster", Service = var.service_slug }, var.observability_discovery ? { "fintechbankx.io/observability" = "enabled" } : {}, var.tags)
-  kms_key_arn = var.kms_key_arn != null ? var.kms_key_arn : aws_kms_key.this[0].arn
-  alarm       = var.alarm_topic_arn == null ? [] : [var.alarm_topic_arn]
+  name = var.name != null ? var.name : "${var.environment}-${var.service_slug}"
+  tags = merge({ ManagedBy = "terraform", Module = "documentdb-cluster", Service = var.service_slug }, var.observability_discovery ? { "fintechbankx.io/observability" = "enabled" } : {}, var.tags)
+  # ADR-023 KMS split: storage key and secrets key.
+  kms_key_arn         = var.kms_key_arn != null ? var.kms_key_arn : aws_kms_key.this[0].arn
+  secrets_kms_key_arn = var.secrets_kms_key_arn != null ? var.secrets_kms_key_arn : aws_kms_key.secrets[0].arn
+  alarm               = var.alarm_topic_arn == null ? [] : [var.alarm_topic_arn]
 }
 
+# Storage key (cluster storage and snapshots). Not tagged
+# fintechbankx.io/secrets: the External Secrets roles cannot use it.
 resource "aws_kms_key" "this" {
   count                   = var.kms_key_arn == null ? 1 : 0
-  description             = "DocumentDB ${local.name}: storage, snapshots and credentials"
+  description             = "DocumentDB ${local.name}: storage and snapshots"
+  enable_key_rotation     = true
+  deletion_window_in_days = 30
+  tags                    = local.tags
+}
+
+resource "aws_kms_alias" "this" {
+  count         = var.kms_key_arn == null ? 1 : 0
+  name          = "alias/${local.name}-docdb-storage"
+  target_key_id = aws_kms_key.this[0].key_id
+}
+
+# Secrets key (docdb-master, docdb-app). Tagged so External Secrets can
+# decrypt the app credential through Secrets Manager.
+resource "aws_kms_key" "secrets" {
+  count                   = var.secrets_kms_key_arn == null ? 1 : 0
+  description             = "DocumentDB ${local.name}: Secrets Manager credentials"
   enable_key_rotation     = true
   deletion_window_in_days = 30
   tags                    = merge(local.tags, { "fintechbankx.io/secrets" = "true" })
 }
 
-resource "aws_kms_alias" "this" {
-  count         = var.kms_key_arn == null ? 1 : 0
-  name          = "alias/${local.name}-docdb"
-  target_key_id = aws_kms_key.this[0].key_id
+resource "aws_kms_alias" "secrets" {
+  count         = var.secrets_kms_key_arn == null ? 1 : 0
+  name          = "alias/${local.name}-docdb-secrets"
+  target_key_id = aws_kms_key.secrets[0].key_id
 }
 
 resource "aws_docdb_subnet_group" "this" {
@@ -90,7 +110,7 @@ resource "random_password" "master" {
 resource "aws_secretsmanager_secret" "master" {
   name                    = "${local.name}/docdb-master"
   description             = "DocumentDB admin credential for ${local.name} (DBA bootstrap only)"
-  kms_key_id              = local.kms_key_arn
+  kms_key_id              = local.secrets_kms_key_arn
   recovery_window_in_days = 7
   # Terraform writes this value, so the tf-plan role may refresh it (github-oidc).
   tags = merge(local.tags, { "fintechbankx.io/value-in-state" = "true" })
@@ -134,6 +154,11 @@ resource "aws_docdb_cluster" "this" {
   lifecycle {
     # Rotated outside Terraform after bootstrap.
     ignore_changes = [master_password]
+
+    precondition {
+      condition     = var.kms_key_arn == null || var.secrets_kms_key_arn == null || var.kms_key_arn != var.secrets_kms_key_arn
+      error_message = "kms_key_arn (storage) and secrets_kms_key_arn (secrets) must be different keys (ADR-023)."
+    }
   }
 }
 
@@ -150,7 +175,7 @@ resource "aws_docdb_cluster_instance" "this" {
 resource "aws_secretsmanager_secret" "app" {
   name                    = "${var.environment}/${var.service_slug}/docdb-app"
   description             = "Application credential for ${local.name} DocumentDB (written by the DBA bootstrap)"
-  kms_key_id              = local.kms_key_arn
+  kms_key_id              = local.secrets_kms_key_arn
   recovery_window_in_days = 7
   tags                    = local.tags
 }

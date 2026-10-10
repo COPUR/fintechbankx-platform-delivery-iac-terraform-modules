@@ -24,8 +24,13 @@ output "security_group_id" {
 }
 
 output "kms_key_arn" {
-  description = "KMS key (grant kms:Decrypt to readers of the app secret)."
+  description = "Storage key (ADR-023): cluster storage and snapshots. Not for secrets."
   value       = local.kms_key_arn
+}
+
+output "secrets_kms_key_arn" {
+  description = "Secrets key (ADR-023, tagged fintechbankx.io/secrets=true) of docdb-master and docdb-app (grant kms:Decrypt via Secrets Manager to readers of the app secret)."
+  value       = local.secrets_kms_key_arn
 }
 
 output "app_secret_name" {

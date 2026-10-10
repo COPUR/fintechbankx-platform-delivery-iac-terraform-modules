@@ -49,8 +49,13 @@ output "security_group_id" {
 }
 
 output "kms_key_arn" {
-  description = "KMS key protecting storage and credentials (grant kms:Decrypt to the workload)."
+  description = "Storage key (ADR-023): cluster storage, snapshots and Performance Insights. Not for secrets; workloads never need it."
   value       = local.kms_key_arn
+}
+
+output "secrets_kms_key_arn" {
+  description = "Secrets key (ADR-023, tagged fintechbankx.io/secrets=true) of the master, db-app and db-migration secrets; pass it to operator-db-access kms_key_arns for the db-import secret and grant kms:Decrypt via Secrets Manager to readers of these secrets."
+  value       = local.secrets_kms_key_arn
 }
 
 output "app_secret_arn" {

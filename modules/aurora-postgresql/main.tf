@@ -1,6 +1,6 @@
 # Aurora PostgreSQL Serverless v2 owned by exactly one service (database per
 # service). Generalises what loan-lifecycle-core's deploy/terraform does
-# inline: dedicated KMS key, rds.force_ssl, subnet group across AZs, a
+# inline: dedicated KMS keys (storage and secrets), rds.force_ssl, subnet group across AZs, a
 # security group that only admits the workload security group(s), an
 # RDS-managed admin credential, an application credential secret container
 # (value written by the DBA bootstrap, never by Terraform) and alarms.
@@ -9,46 +9,85 @@
 locals {
   tags         = merge({ ManagedBy = "terraform", Module = "aurora-postgresql", Database = var.database_name }, var.observability_discovery ? { "fintechbankx.io/observability" = "enabled" } : {}, var.tags)
   engine_major = split(".", var.engine_version)[0]
-  kms_key_arn  = var.kms_key_arn != null ? var.kms_key_arn : aws_kms_key.this[0].arn
-  alarm_action = var.alarm_topic_arn == null ? [] : [var.alarm_topic_arn]
+  # ADR-023 KMS split: storage (cluster, snapshots, Performance Insights) and
+  # secrets (every Secrets Manager secret of this database) use different keys.
+  kms_key_arn         = var.kms_key_arn != null ? var.kms_key_arn : aws_kms_key.this[0].arn
+  secrets_kms_key_arn = var.secrets_kms_key_arn != null ? var.secrets_kms_key_arn : aws_kms_key.secrets[0].arn
+  alarm_action        = var.alarm_topic_arn == null ? [] : [var.alarm_topic_arn]
   # rds.force_ssl only forces encryption; verify-full also checks that the
   # server certificate chains to the RDS CA and names the endpoint.
   tls_params = "sslmode=verify-full&sslrootcert=${var.ssl_root_cert_path}"
 
   # Two-role DBA bootstrap (request-to-pay PR #14 review): the runtime role
   # never owns the schema, so a compromised pod cannot ALTER, DROP or TRUNCATE.
-  roles_named = var.schema_name != null && var.app_role_name != null && var.migration_role_name != null
-  role_bootstrap_sql = local.roles_named ? join("\n", [
-    "-- Two-role bootstrap for ${var.database_name} (run as the RDS admin; set each password with \\password from its secret).",
+  #
+  # PostgreSQL 16 (Aurora 16): the RDS admin has CREATEROLE but is not a
+  # superuser. A role it creates is granted back to it with ADMIN OPTION only
+  # (no SET, no INHERIT), so CREATE SCHEMA ... AUTHORIZATION <owner> and
+  # ALTER DEFAULT PRIVILEGES FOR ROLE <owner> fail with "must be able to SET
+  # ROLE". The admin therefore takes SET (not INHERIT) on the owner, acts as
+  # the owner for the schema grants and gives the membership back. The SET
+  # option of GRANT needs PostgreSQL 16; older engines get a plain membership.
+  owner_self_grant = tonumber(local.engine_major) >= 16 ? " WITH SET TRUE, INHERIT FALSE" : ""
+  roles_named      = var.schema_name != null && var.app_role_name != null && var.migration_role_name != null
+  role_bootstrap_sql = local.roles_named ? join("\n", concat([
+    "-- Two-role bootstrap for ${var.database_name} (run once as the RDS admin, in ${var.database_name}; set each password with \\password from its secret).",
     "CREATE ROLE ${var.migration_role_name} LOGIN;",
     "CREATE ROLE ${var.app_role_name} LOGIN;",
     "REVOKE ALL ON DATABASE ${var.database_name} FROM PUBLIC;",
     "REVOKE CREATE ON SCHEMA public FROM PUBLIC;",
     "GRANT CONNECT ON DATABASE ${var.database_name} TO ${var.migration_role_name}, ${var.app_role_name};",
+    "-- PostgreSQL 16: act as the owner only for the schema grants, then drop the membership.",
+    "GRANT ${var.migration_role_name} TO CURRENT_USER${local.owner_self_grant};",
     "CREATE SCHEMA IF NOT EXISTS ${var.schema_name} AUTHORIZATION ${var.migration_role_name};",
+    "SET ROLE ${var.migration_role_name};",
     "GRANT USAGE ON SCHEMA ${var.schema_name} TO ${var.app_role_name};",
     "ALTER DEFAULT PRIVILEGES FOR ROLE ${var.migration_role_name} IN SCHEMA ${var.schema_name} GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO ${var.app_role_name};",
     "ALTER DEFAULT PRIVILEGES FOR ROLE ${var.migration_role_name} IN SCHEMA ${var.schema_name} GRANT USAGE, SELECT ON SEQUENCES TO ${var.app_role_name};",
-    var.pgaudit_enabled ? "CREATE EXTENSION IF NOT EXISTS pgaudit;" : "-- pgaudit disabled (pgaudit_enabled = false)",
-    "",
-  ]) : null
+    "RESET ROLE;",
+    "REVOKE ${var.migration_role_name} FROM CURRENT_USER;",
+    ], var.pgaudit_enabled ? [
+    "CREATE EXTENSION IF NOT EXISTS pgaudit;",
+    # Object audit role (pgaudit.role): statements on objects this role holds
+    # privileges on are logged as AUDIT: OBJECT. It may already exist.
+    "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${var.pgaudit_role}') THEN CREATE ROLE ${var.pgaudit_role} NOLOGIN; END IF; END $$;",
+  ] : ["-- pgaudit disabled (pgaudit_enabled = false)"], [""])) : null
 }
 
-# --- Encryption -------------------------------------------------------------
+# --- Encryption (ADR-023: storage key and secrets key) -----------------------
 
+# Storage key: cluster storage, snapshots and Performance Insights. Not tagged
+# fintechbankx.io/secrets, so the External Secrets roles (which may decrypt
+# only with tagged keys) can never use it.
 resource "aws_kms_key" "this" {
   count                   = var.kms_key_arn == null ? 1 : 0
-  description             = "Encrypts ${var.database_name} storage, snapshots, Performance Insights and credentials"
+  description             = "Encrypts ${var.database_name} storage, snapshots and Performance Insights"
   enable_key_rotation     = true
   deletion_window_in_days = 30
-  # Lets External Secrets Operator decrypt the app credential (contract addendum).
-  tags = merge(local.tags, { "fintechbankx.io/secrets" = "true" })
+  tags                    = local.tags
 }
 
 resource "aws_kms_alias" "this" {
   count         = var.kms_key_arn == null ? 1 : 0
-  name          = "alias/${var.name}-db"
+  name          = "alias/${var.name}-db-storage"
   target_key_id = aws_kms_key.this[0].key_id
+}
+
+# Secrets key: the RDS-managed master secret, db-app and db-migration (and the
+# operator db-import secret, operator-db-access). Tagged so External Secrets
+# can decrypt the app credential through Secrets Manager (contract addendum).
+resource "aws_kms_key" "secrets" {
+  count                   = var.secrets_kms_key_arn == null ? 1 : 0
+  description             = "Encrypts the Secrets Manager credentials of ${var.database_name}"
+  enable_key_rotation     = true
+  deletion_window_in_days = 30
+  tags                    = merge(local.tags, { "fintechbankx.io/secrets" = "true" })
+}
+
+resource "aws_kms_alias" "secrets" {
+  count         = var.secrets_kms_key_arn == null ? 1 : 0
+  name          = "alias/${var.name}-db-secrets"
+  target_key_id = aws_kms_key.secrets[0].key_id
 }
 
 # --- Network ----------------------------------------------------------------
@@ -112,6 +151,16 @@ resource "aws_rds_cluster_parameter_group" "this" {
       value = join(",", var.pgaudit_log_classes)
     }
   }
+
+  # Object audit: any statement on an object pgaudit_role has a privilege on
+  # is logged as AUDIT: OBJECT (README "Audit logging").
+  dynamic "parameter" {
+    for_each = var.pgaudit_enabled ? [1] : []
+    content {
+      name  = "pgaudit.role"
+      value = var.pgaudit_role
+    }
+  }
 }
 
 resource "aws_rds_cluster" "this" {
@@ -122,7 +171,7 @@ resource "aws_rds_cluster" "this" {
   database_name                       = var.database_name
   master_username                     = var.master_username
   manage_master_user_password         = true
-  master_user_secret_kms_key_id       = local.kms_key_arn
+  master_user_secret_kms_key_id       = local.secrets_kms_key_arn
   db_subnet_group_name                = aws_db_subnet_group.this.name
   vpc_security_group_ids              = [aws_security_group.this.id]
   db_cluster_parameter_group_name     = aws_rds_cluster_parameter_group.this.name
@@ -138,6 +187,13 @@ resource "aws_rds_cluster" "this" {
   final_snapshot_identifier           = "${var.name}-aurora-final"
   enabled_cloudwatch_logs_exports     = ["postgresql"]
   tags                                = local.tags
+
+  lifecycle {
+    precondition {
+      condition     = var.kms_key_arn == null || var.secrets_kms_key_arn == null || var.kms_key_arn != var.secrets_kms_key_arn
+      error_message = "kms_key_arn (storage) and secrets_kms_key_arn (secrets) must be different keys (ADR-023)."
+    }
+  }
 
   serverlessv2_scaling_configuration {
     min_capacity = var.min_capacity
@@ -176,7 +232,7 @@ resource "aws_secretsmanager_secret" "app" {
   count                   = var.create_app_secret ? 1 : 0
   name                    = var.app_secret_name
   description             = "Application credential for ${var.database_name}"
-  kms_key_id              = local.kms_key_arn
+  kms_key_id              = local.secrets_kms_key_arn
   recovery_window_in_days = 7
   # Operator-filled: the value is never in state, so the tf-plan role must
   # never read it (github-oidc OwnTerraformWrittenSecretValues). Merged last
@@ -189,7 +245,7 @@ resource "aws_secretsmanager_secret" "migration" {
   count                   = var.create_migration_secret ? 1 : 0
   name                    = coalesce(var.migration_secret_name, "${dirname(var.app_secret_name)}/db-migration")
   description             = "Schema owner (Flyway migration) credential for ${var.database_name}"
-  kms_key_id              = local.kms_key_arn
+  kms_key_id              = local.secrets_kms_key_arn
   recovery_window_in_days = 7
   # Operator-filled: the value is never in state, so the tf-plan role must
   # never read it (github-oidc OwnTerraformWrittenSecretValues). Merged last
