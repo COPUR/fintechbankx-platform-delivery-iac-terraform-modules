@@ -62,7 +62,7 @@ bucket policy itself for that).
 | `platform_secrets_role_arn` | mesh repo: `external-secrets-platform` service account annotation, overlay parameter `PLATFORM_SECRETS_ROLE_ARN` (ClusterSecretStore `aws-secrets-manager-platform`) |
 | `vpc_cidr`, `private_subnet_cidrs`, `msk_security_group_id`, `msk_subnet_ids` | mesh repo `params.env` |
 | `ingress_tls_secret_name` | mesh repo: gateway certificate at Secrets Manager `<env>/platform/ingress-tls` (created and filled outside Terraform; no certificate material in this repository) |
-| `operator_security_group_id`, `operator_instance_id`, `operator_db_import_role_arns`, `operator_session_log_group_name` | service repos: add the security group to the database `allowed_security_group_ids`; operators: credential path in "Operator database access" |
+| `operator_security_group_id`, `operator_instance_id`, `operator_db_import_role_arns`, `operator_session_log_group_name`, `operator_session_log_kms_key_arn` | service repos: add the security group to the database `allowed_security_group_ids`; operators: credential path in "Operator database access"; Identity Center permission sets: `kms:GenerateDataKey` on the session-log key; account baseline: Session Manager preferences when `manage_session_manager_preferences` is `false` |
 | `amp_remote_write_url`, `observability_role_arns`, `observability_buckets`, `grafana_db_secret_name` | observability repo (IRSA for `observability/{prometheus,otel-gateway,tempo,loki,yace}`) |
 
 ## Operator database access
@@ -73,8 +73,8 @@ host without internet (`ssm`, `ssmmessages`, `ec2messages`) plus `kms`, `secrets
 ([`operator-access`](../../modules/operator-access/README.md)) and, for `operator_db_import_service_slugs`, the
 `<env>-<slug>-db-import` roles and empty secrets ([`operator-db-access`](../../modules/operator-db-access/README.md)).
 `operator_db_import_kms_key_arns` must name each service's ADR-023 secrets key (its `aurora-postgresql` output
-`secrets_kms_key_arn`); the plan fails without it. `tests/operator.tftest.hcl` (mock providers) checks the endpoints
-and the key wiring.
+`secrets_kms_key_arn`); the plan fails without it. `tests/operator.tftest.hcl` (mock providers) checks the endpoints,
+the key wiring and the `operator_session_log_kms_key_arn` output.
 
 Credential path (the password never lands on the operator host):
 
@@ -83,8 +83,12 @@ Credential path (the password never lands on the operator host):
    --source-identity <user>`. The trust policy refuses the call without a source identity.
 2. With those credentials, read `<env>/<slug>/db-import` (`aws secretsmanager get-secret-value`) straight into the
    environment of the `psql` (or `pg_restore`) process, for example `PGPASSWORD`; do not write it to a file.
-3. Open a port-forwarding session through the host (the permission set needs `ssm:StartSession` on the host and the
-   document `AWS-StartPortForwardingSessionToRemoteHost`):
+3. Open a port-forwarding session through the host, with the permission-set credentials (not the db-import role).
+   The permission set needs `ssm:StartSession` on the host and on the document
+   `AWS-StartPortForwardingSessionToRemoteHost`, and `kms:GenerateDataKey` on the session-log key
+   (`operator_session_log_kms_key_arn`): once the Session Manager preferences document sets that key as `kmsKeyId`
+   (prerequisite under "Evidence trail"), session data is encrypted with it and the caller who starts the session
+   needs a data key from it:
    `aws ssm start-session --target <operator_instance_id> --document-name AWS-StartPortForwardingSessionToRemoteHost
    --parameters host=<writer endpoint>,portNumber=5432,localPortNumber=15432`.
 4. Connect from the workstation with certificate checks against the real endpoint name:
@@ -92,13 +96,38 @@ Credential path (the password never lands on the operator host):
    sslrootcert=<RDS CA bundle>"`. TLS runs end to end between the workstation and Aurora; the host only relays the
    encrypted TCP stream and never sees the password or the data.
 
-Evidence trail: CloudTrail `AssumeRole`, `GetSecretValue` and `StartSession` carry the source identity; Session Manager
-writes shell sessions on the host to the KMS-encrypted log group `operator_session_log_group_name`
-(`manage_session_manager_preferences = true` lets this stack own the account/region preferences document); the
-database's pgaudit lines land in its `postgresql` log group (`operator-db-access` can grant the db-import role read
-access to it through `postgresql_log_group_arns`; not wired in this stack yet). Cluster-side, the External Secrets roles deny every
-`<env>/*/db-import` secret; a mesh admission rule rejecting ExternalSecrets with a remote key ending in `/db-import`
-is a mesh-repository follow-up.
+Evidence trail:
+
+- CloudTrail `AssumeRole` (the db-import role) and `GetSecretValue` (`<env>/<slug>/db-import`) carry the source
+  identity, because both use the session created with `--source-identity <user>` in step 1.
+- CloudTrail `StartSession` (step 3) is made with the Identity Center permission-set credentials, so it carries no
+  db-import source identity. It is attributed through the permission-set role session name, which is the Identity
+  Center user name (`userIdentity.arn` ends in `.../AWSReservedSSO_<permission set>_<id>/<user>`).
+- Port-forwarding sessions (the database path) have no transcript, because the stream is TLS-encrypted PostgreSQL.
+  Shell sessions on the host reach the KMS-encrypted log group `operator_session_log_group_name` only when the
+  account/region Session Manager preferences document `SSM-SessionManagerRunShell` points at that group and key.
+  That document is a prerequisite: with `manage_session_manager_preferences = true` this stack creates it; with
+  `false` (the default) the owner of the account baseline, who manages the account's Session Manager preferences
+  outside this repository, sets `cloudWatchLogGroupName`, `cloudWatchEncryptionEnabled = true` and `kmsKeyId` to
+  this stack's outputs. Without the document, sessions are not logged and session data is not encrypted with the
+  key.
+- The database's pgaudit lines land in its `postgresql` log group (`operator-db-access` can grant the db-import role
+  read access to it through `postgresql_log_group_arns`; not wired in this stack yet).
+
+Check before the first operator session in an environment (and after any change to the preferences):
+
+```
+aws ssm get-document --name SSM-SessionManagerRunShell --query Content --output text
+```
+
+Expected: `inputs.cloudWatchLogGroupName` = `operator_session_log_group_name`, `inputs.cloudWatchEncryptionEnabled`
+= `true` and `inputs.kmsKeyId` = `operator_session_log_kms_key_arn`. `InvalidDocument` means the document does not
+exist and sessions are not logged: ask the account-baseline owner to create it, or set
+`manage_session_manager_preferences = true`. Then start a session as an operator and check that the
+`StartSession` event names the user in `userIdentity.arn`.
+
+Cluster-side, the External Secrets roles deny every `<env>/*/db-import` secret; a mesh admission rule rejecting
+ExternalSecrets with a remote key ending in `/db-import` is a mesh-repository follow-up.
 
 ## Image names
 

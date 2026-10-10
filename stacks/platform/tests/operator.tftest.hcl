@@ -88,3 +88,40 @@ run "operator_access_adds_session_manager_and_kms_endpoints" {
     error_message = "Session Manager logging is on with the operator host."
   }
 }
+
+# Session Manager encrypts session data with the session-log key, so the
+# permission set that starts the session needs kms:GenerateDataKey on it
+# (README "Operator database access", step 3): the stack outputs that key.
+run "operator_session_log_key_is_an_output" {
+  command = plan
+
+  variables {
+    operator_access_enabled = true
+  }
+
+  # The key ARN is unknown at plan under the mock provider; pin the module's
+  # output and check that the stack passes it through.
+  override_module {
+    target = module.operator_access
+    outputs = {
+      operator_security_group_id = "sg-0123456789abcdef0"
+      instance_id                = "i-0123456789abcdef0"
+      session_log_group_name     = "/aws/ssm/fintechbankx-dev/sessions"
+      session_log_kms_key_arn    = "arn:aws:kms:me-central-1:111122223333:key/00000000-0000-4000-8000-00000000c0de"
+    }
+  }
+
+  assert {
+    condition     = output.operator_session_log_kms_key_arn == "arn:aws:kms:me-central-1:111122223333:key/00000000-0000-4000-8000-00000000c0de"
+    error_message = "operator_session_log_kms_key_arn is the session-log CMK of operator-access."
+  }
+}
+
+run "operator_session_log_key_null_when_off" {
+  command = plan
+
+  assert {
+    condition     = output.operator_session_log_kms_key_arn == null
+    error_message = "Without operator access there is no session-log key."
+  }
+}

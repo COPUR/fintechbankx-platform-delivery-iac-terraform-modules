@@ -28,10 +28,17 @@ What the trail contains:
 
 - shell sessions on the host: the full transcript in the encrypted log group;
 - port-forwarding sessions (`AWS-StartPortForwardingSessionToRemoteHost`, the normal database path): no transcript
-  (the stream is the TLS-encrypted PostgreSQL protocol); the record is the CloudTrail `StartSession` event, which
-  names the caller's role session and source identity, plus the database's own pgaudit lines in its `postgresql` log
-  group;
-- the credential read: CloudTrail `GetSecretValue` on `<env>/<slug>/db-import` with the same source identity.
+  (the stream is the TLS-encrypted PostgreSQL protocol); the record is the CloudTrail `StartSession` event plus the
+  database's own pgaudit lines in its `postgresql` log group. The operator starts the session with the Identity
+  Center permission-set credentials, so the event is attributed through the role session name (the Identity Center
+  user name); it carries no source identity;
+- the credential read: CloudTrail `AssumeRole` of the `operator-db-access` role and `GetSecretValue` on
+  `<env>/<slug>/db-import`, both with the source identity the operator passed to `AssumeRole`.
+
+Prerequisites outside this module: the transcripts and the session data encryption need the preferences document
+(`manage_session_manager_preferences = true`, or the account-baseline owner points `SSM-SessionManagerRunShell` at
+`session_log_group_name` and `session_log_kms_key_arn`); and whoever starts a session needs `kms:GenerateDataKey` on
+`session_log_kms_key_arn` (granted in the operator permission set).
 
 ## Inputs
 

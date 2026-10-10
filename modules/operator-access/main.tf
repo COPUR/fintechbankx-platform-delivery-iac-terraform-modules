@@ -94,8 +94,8 @@ resource "aws_instance" "this" {
 # Shell sessions on the host stream to a CloudWatch log group encrypted with
 # a dedicated CMK, and session data is encrypted with the same key. Port
 # forwarding sessions carry no shell transcript: their record is the
-# CloudTrail StartSession event (with the caller's source identity) plus the
-# database's own pgaudit log.
+# CloudTrail StartSession event (attributed through the permission-set role
+# session name; no source identity) plus the database's own pgaudit log.
 
 data "aws_region" "current" {}
 data "aws_caller_identity" "current" {}

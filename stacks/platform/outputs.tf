@@ -161,3 +161,8 @@ output "operator_session_log_group_name" {
   description = "KMS-encrypted CloudWatch log group of operator Session Manager sessions (null when operator access is off)."
   value       = var.operator_access_enabled ? module.operator_access[0].session_log_group_name : null
 }
+
+output "operator_session_log_kms_key_arn" {
+  description = "CMK of operator session logs and session data (null when operator access is off). Operator permission sets need kms:GenerateDataKey on it to start a Session Manager session once the preferences document sets it as kmsKeyId."
+  value       = var.operator_access_enabled ? module.operator_access[0].session_log_kms_key_arn : null
+}
