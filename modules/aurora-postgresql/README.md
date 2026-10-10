@@ -123,7 +123,12 @@ Object audit: the parameter group sets `pgaudit.role = rds_pgaudit` (`pgaudit_ro
 that role if it does not exist (an idempotent `DO` block). pgaudit then logs every statement on an object
 `rds_pgaudit` holds a privilege on, as `AUDIT: OBJECT`, independently of `pgaudit.log`.
 
-Migration convention for audit tables (Flyway, as the owner role, in the migration that creates the table):
+This module only creates the `rds_pgaudit` role and sets `pgaudit.role`; it never grants anything on any table
+(`tests/role_bootstrap.tftest.hcl` `bootstrap_grants_nothing_on_tables`). Object-audit grants come from each service's
+own migrations or code. Example: products grants them from its history guard's `arm()` (`UPDATE, DELETE` on
+`product_history`, `INSERT, UPDATE, DELETE` on `fbx_history_guard.armed` and `fbx_history_guard.event`).
+
+Migration convention for audit tables (in the service's migration that creates the table, as the owner role):
 
 ```sql
 GRANT UPDATE, DELETE, TRUNCATE ON <schema>.<audit_table> TO rds_pgaudit;   -- object audit of any change
@@ -194,6 +199,16 @@ the `CREATE EXTENSION pgaudit` line if the local server has no pgaudit. Expected
    privileges) while `CREATE TABLE` in the schema or in `public` and `TRUNCATE` are denied;
 4. after the audit-table convention above, the runtime role can `INSERT` but not `UPDATE` the audit table;
 5. re-running the `rds_pgaudit` `DO` block succeeds.
+
+Two more checks, run as the RDS master user, for services whose migrations need them:
+
+6. `SET session_replication_role = replica;` succeeds. This needs `rds_superuser` on Aurora; a plain `CREATEROLE`
+   user on a local PostgreSQL 16 is denied (`permission denied to set parameter`), so run this check on Aurora only.
+7. `GRANT <role created by someone else> TO <role> WITH INHERIT TRUE, SET TRUE;` succeeds only if the master user holds
+   `ADMIN OPTION` on the granted role. PostgreSQL 16 no longer lets `CREATEROLE` grant any role: without it the
+   statement fails with `permission denied to grant role` and `Only roles with the ADMIN option on role ... may grant
+   this role` (seen on a local PostgreSQL 16.15; it succeeds once `ADMIN OPTION` is granted). Record which result
+   Aurora gives for the roles the service needs.
 
 The SQL from before the PostgreSQL 16 change fails at step 1 with `must be able to SET ROLE "<owner>"`.
 

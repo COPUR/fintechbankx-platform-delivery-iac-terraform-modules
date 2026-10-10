@@ -131,3 +131,15 @@ run "pgaudit_object_audit_role_created_idempotently" {
     error_message = "pgaudit.role must be rds_pgaudit."
   }
 }
+
+# The module only creates rds_pgaudit and sets pgaudit.role. Object-audit
+# grants on tables belong to each service's migrations (e.g. products' history
+# guard arm()), never to the platform bootstrap.
+run "bootstrap_grants_nothing_on_tables" {
+  command = apply
+
+  assert {
+    condition     = length(regexall("(?i)GRANT[^;]*\\bON\\s+(TABLE|ALL\\s+TABLES)\\b", output.role_bootstrap_sql)) == 0 && length(regexall("(?i)GRANT[^;]*TO\\s+rds_pgaudit", output.role_bootstrap_sql)) == 0
+    error_message = "role_bootstrap_sql must not GRANT on tables or to rds_pgaudit; object-audit grants come from service migrations."
+  }
+}
