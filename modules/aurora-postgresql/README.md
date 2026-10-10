@@ -210,6 +210,16 @@ Two more checks, run as the RDS master user, for services whose migrations need 
    this role` (seen on a local PostgreSQL 16.15; it succeeds once `ADMIN OPTION` is granted). Record which result
    Aurora gives for the roles the service needs.
 
+Checks for the products-catalog history guard, run as the RDS master user on Aurora 16:
+
+8. `rds_superuser` grants a role `WITH INHERIT TRUE, SET TRUE` to another role: succeeds only with `ADMIN OPTION` on
+   the granted role.
+9. An `ENABLE ALWAYS` trigger fires while `session_replication_role = replica`, and an ordinary (`ENABLE`) trigger does
+   not: expected, the `ALWAYS` trigger fires and the ordinary trigger is skipped.
+10. With `pgaudit.role = rds_pgaudit` and an object grant to `rds_pgaudit` on a test table, an `UPDATE` on that table
+    writes an `AUDIT: OBJECT` line to the PostgreSQL log: expected, the line is present in CloudWatch.
+11. The master user can `CREATE EVENT TRIGGER`: expected, it succeeds as `rds_superuser` on Aurora PostgreSQL 16.
+
 The SQL from before the PostgreSQL 16 change fails at step 1 with `must be able to SET ROLE "<owner>"`.
 
 On Aurora 16 (dev, once per engine major): the same steps against a scratch database in the dev cluster, connected
