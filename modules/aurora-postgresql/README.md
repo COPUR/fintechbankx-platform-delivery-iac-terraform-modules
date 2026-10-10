@@ -188,13 +188,6 @@ the statements above, and any `UPDATE` or `DELETE` on an audit table, write no `
 that grant the owner role got `permission denied to set parameter "pgaudit.log"` (and `"pgaudit.role"`) and its
 `DISABLE TRIGGER` and `UPDATE` were logged.
 
-A superuser needs neither a `SET` nor DDL: it can write the system catalogs, and
-`UPDATE pg_catalog.pg_trigger SET tgenabled = 'D' WHERE tgname = '<audit_table>_truncate_refused'` disables the
-trigger as class `WRITE`, which `ddl,role` does not log. Locally, with `pgaudit.log` and `pgaudit.role` left at
-`ddl,role` and `rds_pgaudit`, that `UPDATE` and a `TRUNCATE` of the audit table in one transaction wrote 0 `AUDIT`
-lines, while the owner role got `permission denied for table pg_trigger`. On Aurora this path is closed only if
-`rds_superuser` cannot write the system catalogs; drill check 10 records what the master user gets.
-
 Other superuser-only settings keep every `AUDIT` line out of the PostgreSQL log while `pgaudit.log` and
 `pgaudit.role` stay at `ddl,role` and `rds_pgaudit`. Locally, a superuser session's `DISABLE TRIGGER`, `TRUNCATE`
 and `UPDATE` wrote 0 `AUDIT` lines after `SET log_min_messages = 'fatal';`, and 0 after
@@ -209,6 +202,13 @@ Adding `misc` (or `misc_set`) to `pgaudit_log_classes` therefore does not catch 
 it wrote no line, and neither `SET log_min_messages = 'fatal'` nor `SET pgaudit.log_level = 'debug5'` was logged.
 Only a `SET` made before the one that turns logging off, such as `SET pgaudit.role = ''` or
 `SET pgaudit.log_client = on`, is logged (class `MISC`), and a session can make the switching-off `SET` first.
+
+A superuser needs neither a `SET` nor DDL: it can write the system catalogs, and
+`UPDATE pg_catalog.pg_trigger SET tgenabled = 'D' WHERE tgname = '<audit_table>_truncate_refused'` disables the
+trigger as class `WRITE`, which `ddl,role` does not log. Locally, with `pgaudit.log` and `pgaudit.role` left at
+`ddl,role` and `rds_pgaudit`, that `UPDATE` and a `TRUNCATE` of the audit table in one transaction wrote 0 `AUDIT`
+lines, while the owner role got `permission denied for table pg_trigger`. On Aurora this path is closed only if
+`rds_superuser` cannot write the system catalogs; drill check 10 records what the master user gets.
 
 Compensating control, a pre-production gate owned by platform delivery. This module creates the master credential as
 an RDS-managed secret (`manage_master_user_password`, output `master_user_secret_arn`) and builds neither
