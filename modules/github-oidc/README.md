@@ -1,0 +1,166 @@
+# github-oidc
+
+Status: **Proposed** (validated with `terraform validate`; not applied anywhere).
+
+GitHub Actions OIDC federation for one AWS account / environment, matching
+fintechbankx-platform-delivery-iac-cicd-templates
+(docs/delivery/CONSUMING_DELIVERY_WORKFLOWS.md section 4). Per service:
+- ecr-push  : sub repo:<org>/<repo>:ref:refs/heads/main; push/pull on
+fintechbankx/<image_name> only
+- deploy    : sub repo:<org>/<repo>:environment:<env>; eks:DescribeCluster,
+ecr:GetAuthorizationToken and pull (BatchGetImage, GetDownloadUrlForLayer) of
+fintechbankx/<image_name> only, for the cosign verify step
+plus an EKS access entry in Kubernetes group
+fintechbankx:deploy:<namespace> (bind that group to a
+namespaced Role with a RoleBinding; never cluster-admin)
+- tf-plan   : sub pull_request or ref:refs/heads/main; read-only metadata on
+the service's own resources (no AWS-managed policy), state read and lock on
+the service's own state key only
+- tf-apply  : sub environment:<env> only; state read/write on the
+service's key plus caller-provided policies
+No long-lived access keys are created.
+
+## Usage
+
+```hcl
+module "github_oidc" {
+  source = "git::https://github.com/COPUR/fintechbankx-platform-delivery-iac-terraform-modules.git//modules/github-oidc?ref=main"
+  # inputs below
+}
+```
+
+Examples: [`examples/github-oidc`](../../examples/github-oidc/main.tf).
+
+## Requirements
+
+- Terraform `>= 1.6.0`
+- `hashicorp/aws` `>= 5.40, < 6.0`
+
+## Inputs
+
+| Name | Type | Default | Description |
+|---|---|---|---|
+| `environment` | `string` | required | Environment of this account (GitHub environment name, sub ...:environment:<env>). |
+| `github_org` | `string` | `"COPUR"` | GitHub organisation or owner. |
+| `create_oidc_provider` | `bool` | `true` | Create the token.actions.githubusercontent.com provider (once per account). |
+| `oidc_provider_arn` | `string` | `null` | Existing GitHub OIDC provider ARN when create_oidc_provider is false. |
+| `oidc_thumbprints` | `list(string)` | `["6938fd4d98bab03faadb97b34396831e3780aea1", "1c58a3a8518e8759bf075b76b750d4f2df264fcd"]` | Thumbprints for the GitHub OIDC provider. AWS validates GitHub tokens against its own trust store; the values are still required by the API. |
+| `services` | `map(...)` | `{}` | Service id -> GitHub repository, image name (= Kubernetes service account and service slug), context namespace, Terraform state key (unique per service; IAM tag value characters) and optional `resource_name_prefix` (default `<env>-<image_name>`). |
+| `create_ecr_push_roles` | `bool` | `true` | Create ECR push roles in this account (the account that holds the ECR repositories). |
+| `ecr_registry_account_id` | `string` | `null` | Account holding the fintechbankx/* ECR repositories the deploy roles pull from (cosign verify). null = this account. A cross-account registry also needs a repository policy allowing these roles. |
+| `bind_platform_workflow_ref` | `bool` | `false` | Trust every CI role only from the platform's own reusable workflow (ecr-push `container-image.yml`, deploy `helm-deploy.yml`, tf-plan and tf-apply `terraform.yml`) at `platform_workflow_refs`. See "Binding the reusable workflow". |
+| `platform_workflows_repository` | `string` | `fintechbankx-platform-delivery-iac-cicd-templates` | Repository holding the reusable workflows. |
+| `platform_workflow_refs` | `list(string)` | `["refs/tags/v*"]` | Release tags or 40-character release SHAs; branches are refused. |
+| `eks_cluster_name` | `string` | required | EKS cluster the deploy roles target. |
+| `create_eks_access_entries` | `bool` | `true` | Create EKS access entries mapping deploy roles to fintechbankx:deploy:<namespace>. |
+| `terraform_state_bucket` | `string` | required | S3 state bucket of this environment. |
+| `terraform_lock_table` | `string` | `"fintechbankx-terraform-locks"` | DynamoDB lock table. |
+| `terraform_state_kms_key_arn` | `string` | `null` | KMS key of the state bucket (null for SSE-S3). |
+| `apply_policy_arns` | `list(string)` | `[]` | Policies granting what service Terraform creates (Aurora, KMS, Secrets Manager, IAM under a boundary). Kept explicit on purpose; AWS-managed AdministratorAccess, PowerUserAccess, ReadOnlyAccess and ViewOnlyAccess are rejected. |
+| `terraform_state_bucket_key_enabled` | `bool` | `false` | Set true if the state bucket uses S3 Bucket Keys (KMS encryption context is then the bucket ARN). |
+| `manage_terraform_state_bucket_policy` | `bool` | `false` | Attach `terraform_state_bucket_policy_json` to the state bucket (replaces its whole policy). |
+| `verify_terraform_state_bucket_policy` | `bool` | `false` | For a bucket owned elsewhere: read its policy at plan time (`s3:GetBucketPolicy`) and fail the plan unless the four `DenyCiTerraformRoles*` statements are in it as `Deny`. Ignored when `manage_terraform_state_bucket_policy` is true. |
+| `terraform_state_bucket_policy_source_json` | `string` | `null` | Existing state-bucket statements to keep, merged before the CI deny statements. |
+| `permissions_boundary_arn` | `string` | `null` | Permissions boundary for every CI role (recommended for tf-apply). |
+| `tags` | `map(string)` | `{}` | Resource tags. |
+
+## Outputs
+
+| Name | Description |
+|---|---|
+| `oidc_provider_arn` | GitHub OIDC provider ARN. |
+| `role_arns` | Service id -> { ecr-push, deploy, tf-plan, tf-apply } role ARNs (repository variables ECR_PUSH_ROLE_ARN, EKS_DEPLOY_ROLE_ARN_<ENV>, ...). |
+| `deploy_kubernetes_groups` | Service id -> Kubernetes group to bind to a namespaced Role (RoleBinding lives with the mesh/k8s platform repo). |
+| `terraform_state_bucket_policy_json` | State-bucket policy denying each CI Terraform role every key but its own. |
+
+## Kubernetes side (not in this module)
+
+Deploy roles enter the cluster as Kubernetes group `fintechbankx:deploy:<namespace>` through an EKS access entry
+without any access policy, so they can do nothing until a `RoleBinding` in that namespace binds the group to a
+namespaced `Role` (Helm release verbs on Deployments, Services, ConfigMaps, ExternalSecrets, HPAs, PDBs, ...). That
+Role and RoleBinding belong to the mesh/Kubernetes platform repository. Never bind the group to `cluster-admin`.
+
+The `tf-apply` roles get only state access by default; pass `apply_policy_arns` (and preferably
+`permissions_boundary_arn`) for what service Terraform creates.
+
+## Pull-request plans and state isolation (2026-10-08)
+
+The `tf-plan` role trusts pull requests, so anyone who can open a PR on the service repository can use it. It
+therefore has no AWS-managed policy (`ReadOnlyAccess` used to grant `s3:Get*` on every bucket, which overrode the
+per-key state scoping, and log reads). It gets:
+
+| Policy | Grants |
+|---|---|
+| `terraform-state` | `s3:GetObject` on exactly its state key; `s3:ListBucket` with `StringEquals s3:prefix = <key>`; DynamoDB `GetItem` on the lock and digest items and `PutItem`/`DeleteItem` on its own lock item only (exact `dynamodb:LeadingKeys`); `kms:Decrypt` only via S3 and only with encryption context `aws:s3:arn = <bucket>/<key>` |
+| `plan-read-own-resources` | Describe/Get/List on the service's own Aurora/DocumentDB, ElastiCache, KMS keys (by alias `alias/<prefix>-*`), Secrets Manager `<env>/<image_name>/*` and `<prefix>/*` (values only of secrets tagged `fintechbankx.io/value-in-state=true`; `kms:Decrypt` on `key/*` only via Secrets Manager and only with encryption context `SecretARN` = one of those two patterns, so customer-managed keys without an alias work), IAM roles/policies `<prefix>-*`, log group tags, SSM `/*/<env>/<image_name>/*`, alarm tags; a `*` statement with only Describe/List calls AWS cannot scope (security groups, subnets, VPCs, engine versions, alias list, alarm and log group lists) |
+
+`<prefix>` is `<env>-<image_name>` (the name the module library gives a service's resources) unless
+`resource_name_prefix` is set. `GetSecretValue` is limited to the service's own secrets tagged `fintechbankx.io/value-in-state=true` (values Terraform wrote, already in state; set by microservice-base, documentdb-cluster and elasticache-redis); operator-filled secrets such as db-app, db-migration and oidc-client are never readable. It is needed to refresh
+`aws_secretsmanager_secret_version`; those values are in its own state already. A service whose stack manages
+other resource types gets `AccessDenied` on plan: extend this policy here (scoped), never attach a broad policy.
+
+Every `tf-plan` / `tf-apply` role carries the tag `TerraformStateKey = <its key>`. The state-bucket policy
+(`terraform_state_bucket_policy_json`) denies roles matching `gha-<env>-*-tf-plan|tf-apply` every object except
+`${aws:PrincipalTag/TerraformStateKey}` (and `.tflock`), every bucket action except listing their own key, and
+everything if the tag is missing. It has a fixed size whatever the number of services. Attach it with
+`manage_terraform_state_bucket_policy = true` (pass the bucket's existing statements in
+`terraform_state_bucket_policy_source_json`), or merge it into the policy of the bootstrap that owns the bucket and
+set `verify_terraform_state_bucket_policy = true` so a plan fails while the merge is missing (`stacks/platform`
+does this by default). State keys must be unique per service (validated).
+
+Role names: `gha-<env>-<service id without svc->-<kind>`, at most 59 characters (service ids are limited to 42).
+
+## Tests
+
+`terraform test` (Terraform >= 1.7, mock AWS provider, `command = plan`, no credentials) in [`tests/`](tests): role names within 64 characters; `sub` per role kind (main, environment, pull request); no wildcard trust; over-long service id rejected; no AWS-managed broad policy on any role and none at all on plan roles; plan-role S3 statements reference only its own key, ListBucket limited by exact prefix, no write actions except its own lock item, KMS decrypt via S3 for its own object only, no other service's resources or secrets, `*` only for Describe/List; state-bucket deny statements, and a plan that fails while the bucket policy lacks them (`verify_terraform_state_bucket_policy`); plan-role `kms:Decrypt` only via Secrets Manager for its own secret ARNs; duplicate state keys and AdministratorAccess in `apply_policy_arns` rejected; deploy role pulls only its own repository (optionally in `ecr_registry_account_id`) and cannot push; with `bind_platform_workflow_ref` each role trusts only its platform workflow at a release tag or SHA, and branch refs are refused.
+Run `terraform init -backend=false && terraform test` in this directory; CI runs it through
+`scripts/ci/terraform-validate-all.sh`.
+
+## Binding the reusable workflow
+
+Without the binding, a deploy role trusts any job in the service repository's environment, so a caller can run a
+modified copy of `helm-deploy.yml` with it. With `bind_platform_workflow_ref = true` the `sub` condition becomes
+`<subject>:job_workflow_ref:<org>/<platform repo>/.github/workflows/<file>@<ref>` (StringLike), so only the platform's
+own workflow at a release ref can assume the role. Turn it on together with the repository's OIDC subject template,
+because the customized `sub` applies to every job in that repository:
+
+```
+PUT /repos/<org>/<repo>/actions/oidc/customization/sub
+{"use_default": false, "include_claim_keys": ["repo", "context", "job_workflow_ref"]}
+```
+
+A caller pinning the workflows by SHA (`@<sha> # v1.0.0`) presents `job_workflow_ref ...@<sha>`, not the tag, so
+list those release SHAs in `platform_workflow_refs`. Protect the release tags with a tag ruleset.
+
+### Rollout (off by default)
+
+`bind_platform_workflow_ref` defaults to `false` and stays off until every precondition below holds. Switching it on
+before them breaks CI: a role then trusts only a `sub` the repositories do not present yet.
+
+1. `fintechbankx-platform-delivery-iac-cicd-templates` publishes release tags (`refs/tags/v*`) of
+   `container-image.yml`, `helm-deploy.yml` and `terraform.yml`, protected by a tag ruleset (owner: the
+   cicd-templates maintainers).
+2. Every service repository in the stack's `github_services` calls those workflows at a release tag or at a release
+   SHA listed in `platform_workflow_refs`, never at a branch. The input is one switch for every role of every service
+   in the stack, so one repository still calling `@main` loses its CI roles (owner: each service repository).
+3. Every one of those repositories has the OIDC `sub` customization above (`PUT .../actions/oidc/customization/sub`,
+   repository admin or organization admin). The customization is per repository and changes the `sub` of every job
+   in it, for every environment. Roles that are not bound yet still expect the plain `sub` and stop matching, so the
+   customization and the switch go together: apply `bind_platform_workflow_ref = true` to every environment's
+   `stacks/platform` in the same change window as the customization (dev first in that window, then staging and
+   prod), and check one `ecr-push`, `deploy`, `tf-plan` and `tf-apply` job per environment afterwards.
+
+Who switches it on: the platform delivery team, which owns `stacks/platform` and its per-environment tfvars, sets
+`bind_platform_workflow_ref = true` (and `platform_workflow_refs` if callers pin SHAs) in a reviewed change once
+1 and 2 are confirmed, and coordinates step 3 with the repository or organization admins. Rollback, also in one
+change window: set the input back to `false` and reset the customization (`{"use_default": true}`).
+
+What the binding protects, per role kind (it is applied to all four):
+
+| Role | Bound workflow | What the binding guarantees | What else it relies on |
+|---|---|---|---|
+| `ecr-push` | `container-image.yml` | only the platform's build, scan and sign steps run with the credentials | `main`-branch `sub` (merged, reviewed code) |
+| `deploy` | `helm-deploy.yml` | only the platform's verify-and-deploy steps run with the credentials | environment protection rules (reviewers, deployment branches) |
+| `tf-apply` | `terraform.yml` | only the platform's Terraform steps run with the credentials | environment protection rules, because those steps run the repository's Terraform code (which can execute programs at plan and apply) from a branch the environment admits; `apply_policy_arns` and the permissions boundary |
+| `tf-plan` | `terraform.yml` | only a job calling the platform workflow can assume the role; other jobs in the pull request's workflow cannot | **its least-privilege policy**: the job runs `terraform plan` on the pull request's own configuration, and Terraform runs code at plan time (`data "external"`, third-party providers and modules), so a pull request can still run arbitrary code with tf-plan credentials. The role can only read its own state key and lock item, describe its own resources, and read values of its own secrets tagged `fintechbankx.io/value-in-state=true` |
+

@@ -1,0 +1,131 @@
+aws_region         = "me-central-1"
+environment        = "prod"
+vpc_cidr           = "10.42.0.0/16"
+az_count           = 3
+single_nat_gateway = false
+
+eks_node_groups = {
+  general = {
+    instance_types             = ["m6i.2xlarge", "m6a.2xlarge", "m5.2xlarge"]
+    min_size                   = 6
+    max_size                   = 18
+    desired_size               = 6
+    disk_size_gb               = 100
+    max_unavailable_percentage = 10
+  }
+}
+
+msk_broker_count          = 3
+msk_broker_instance_type  = "kafka.m7g.xlarge"
+msk_broker_volume_size_gb = 1000
+log_retention_days        = 365
+
+eks_cluster_admin_role_arns = ["arn:aws:iam::111122223333:role/platform-break-glass"]
+alarm_topic_arn             = "arn:aws:sns:me-central-1:111122223333:fintechbankx-prod-platform-alarms"
+
+# Every service of the platform contract. image_name = Kubernetes service
+# account = ECR repository fintechbankx/<image_name>. All names were
+# confirmed by the owning service threads (2026-10-08).
+github_services = {
+  "svc-ln-loan-lifecycle" = {
+    repository          = "fintechbankx-lendingpayments-loan-lifecycle-core"
+    image_name          = "loan-lifecycle-service"
+    namespace           = "lending"
+    terraform_state_key = "lending/loan-lifecycle-service/terraform.tfstate"
+  }
+  "svc-pay-initiation-settlement" = {
+    repository          = "fintechbankx-lendingpayments-payment-orchestration-initiation-settlement"
+    image_name          = "payment-initiation-settlement-service"
+    namespace           = "payments"
+    terraform_state_key = "payments/payment-initiation-settlement-service/terraform.tfstate"
+  }
+  "svc-pay-request-to-pay" = {
+    repository          = "fintechbankx-lendingpayments-payment-orchestration-request-to-pay"
+    image_name          = "payment-request-to-pay-service"
+    namespace           = "payments"
+    terraform_state_key = "payments/payment-request-to-pay-service/terraform.tfstate"
+  }
+  "svc-pay-recurring-mandates" = {
+    repository          = "fintechbankx-lendingpayments-payment-orchestration-recurring-mandates"
+    image_name          = "payment-recurring-mandates-service"
+    namespace           = "payments"
+    terraform_state_key = "payments/payment-recurring-mandates-service/terraform.tfstate"
+  }
+  "svc-pay-bulk-orchestration" = {
+    repository          = "fintechbankx-lendingpayments-payment-orchestration-bulk-orchestration"
+    image_name          = "payment-bulk-orchestration-service"
+    namespace           = "payments"
+    terraform_state_key = "payments/payment-bulk-orchestration-service/terraform.tfstate"
+  }
+  "svc-cus-profile-kyc" = {
+    repository          = "fintechbankx-customer-profile-kyc-core"
+    image_name          = "customer-profile-kyc-service"
+    namespace           = "customer"
+    terraform_state_key = "customer/customer-profile-kyc-service/terraform.tfstate"
+  }
+  "svc-rsk-decisioning" = {
+    repository          = "fintechbankx-riskcompliance-risk-decisioning-core"
+    image_name          = "risk-decisioning-service"
+    namespace           = "risk"
+    terraform_state_key = "risk/risk-decisioning-service/terraform.tfstate"
+  }
+  "svc-cmp-evidence" = {
+    repository          = "fintechbankx-riskcompliance-compliance-evidence-core"
+    image_name          = "compliance-evidence-service"
+    namespace           = "compliance"
+    terraform_state_key = "compliance/compliance-evidence-service/terraform.tfstate"
+  }
+  "svc-of-consent-authorization" = {
+    repository          = "fintechbankx-openfinance-consent-auth-service"
+    image_name          = "consent-authorization-service"
+    namespace           = "open-finance"
+    terraform_state_key = "open-finance/consent-authorization-service/terraform.tfstate"
+  }
+  "svc-of-payee-verification" = {
+    repository          = "fintechbankx-openfinance-payee-metadata-payee-verification"
+    image_name          = "payee-verification-service"
+    namespace           = "open-finance"
+    terraform_state_key = "open-finance/payee-verification-service/terraform.tfstate"
+  }
+  "svc-of-personal-financial-data" = {
+    repository          = "fintechbankx-openfinance-retail-data-personal-financial"
+    image_name          = "personal-financial-data-service"
+    namespace           = "open-finance"
+    terraform_state_key = "open-finance/personal-financial-data-service/terraform.tfstate"
+  }
+  "svc-of-business-financial-data" = {
+    repository          = "fintechbankx-openfinance-corporate-data-business-financial"
+    image_name          = "business-financial-data-service"
+    namespace           = "open-finance"
+    terraform_state_key = "open-finance/business-financial-data-service/terraform.tfstate"
+  }
+  "svc-of-banking-metadata" = {
+    repository          = "fintechbankx-openfinance-payee-metadata-banking-metadata"
+    image_name          = "banking-metadata-service"
+    namespace           = "open-finance"
+    terraform_state_key = "open-finance/banking-metadata-service/terraform.tfstate"
+  }
+  "svc-of-atm-directory" = {
+    repository          = "fintechbankx-openfinance-open-data-atm-directory"
+    image_name          = "atm-directory-service"
+    namespace           = "open-finance"
+    terraform_state_key = "open-finance/atm-directory-service/terraform.tfstate"
+  }
+  "svc-of-open-products-catalog" = {
+    repository          = "fintechbankx-openfinance-open-data-products-catalog"
+    image_name          = "open-products-catalog-service"
+    namespace           = "open-finance"
+    terraform_state_key = "open-finance/open-products-catalog-service/terraform.tfstate"
+  }
+}
+
+# Operator access (SSM Session Manager only). Off until Identity Center
+# permission sets exist; then list their role ARNs and the services that need
+# a db-import role, e.g.
+#   operator_access_enabled          = true
+#   operator_db_import_service_slugs = ["payment-request-to-pay-service"]
+#   operator_principal_arns          = ["arn:aws:iam::111122223333:role/aws-reserved/sso.amazonaws.com/me-central-1/AWSReservedSSO_DbOperator_0123456789abcdef"]
+#   # ADR-023 secrets key of each service database (aurora-postgresql output
+#   # secrets_kms_key_arn); required for every slug above.
+#   operator_db_import_kms_key_arns  = { "payment-request-to-pay-service" = "arn:aws:kms:me-central-1:111122223333:key/11111111-2222-3333-4444-555555555555" }
+operator_access_enabled = false
