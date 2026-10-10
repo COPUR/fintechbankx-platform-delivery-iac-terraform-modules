@@ -8,7 +8,8 @@
 # rds_pgaudit UPDATE, DELETE only and refuses TRUNCATE with a statement-level
 # BEFORE TRUNCATE trigger set ENABLE ALWAYS (fires under
 # session_replication_role = replica too); disabling or dropping it is DDL,
-# logged as AUDIT: SESSION class DDL when a non-superuser role does it.
+# logged as AUDIT: SESSION class DDL when the role cannot turn off audit logging
+# for its own session.
 
 mock_provider "aws" {}
 
@@ -141,7 +142,8 @@ run "partitioned_audit_tables" {
   }
 }
 
-# pgaudit.log and pgaudit.role are superuser-only settings, and SET is class
+# pgaudit.log and pgaudit.role are superuser-only settings (on PostgreSQL 16
+# also settable by a role granted SET ON PARAMETER on them), and SET is class
 # MISC (not in ddl,role). Checked on a local PostgreSQL 16.15 with pgaudit:
 # after SET pgaudit.log = 'none'; SET pgaudit.role = ''; a superuser session's
 # DISABLE TRIGGER, CREATE OR REPLACE FUNCTION, TRUNCATE and UPDATE wrote 0
@@ -169,7 +171,7 @@ run "superuser_session_bypass_named" {
       ] :
       strcontains(one(regex("(?s)\n```\n\nThe default privileges give the runtime role(.*?)\n## TLS to the database", file("${path.module}/README.md"))), needle)
     ])
-    error_message = "README: name the superuser-equivalent session that clears pgaudit.log and pgaudit.role first, and the compensating control (Database Activity Streams, or the master credential as break-glass with a CloudTrail GetSecretValue alarm) as a pre-production gate owned by platform delivery."
+    error_message = "README: name the session that clears its own pgaudit.log and pgaudit.role first, and the compensating control (Database Activity Streams, or the master credential as break-glass with a CloudTrail GetSecretValue alarm) as a pre-production gate owned by platform delivery."
   }
 
   assert {
@@ -180,10 +182,6 @@ run "superuser_session_bypass_named" {
     error_message = "README Aurora 16 drill check 10 must record whether the master user can change its own pgaudit.log and pgaudit.role, and name the compensating control if it can."
   }
 
-  assert {
-    condition     = length(regexall("(?i)every way past the trigger\\s+by\\s+a\\s+non-superuser\\s+role\\s+is\\s+DDL\\s+and\\s+logged", file("${path.module}/README.md"))) == 1
-    error_message = "README drill check 10: every way past the trigger by a non-superuser role is DDL and logged."
-  }
 
   assert {
     condition = (
@@ -191,6 +189,44 @@ run "superuser_session_bypass_named" {
       length(regexall("(?i)All of these are logged\\s+as", file("${path.module}/README.md"))) == 0 &&
       length(regexall("\\(owner, DBA\\) an\\s+`AUDIT: OBJECT` line\\.", file("${path.module}/README.md"))) == 0
     )
-    error_message = "README must not claim that every way past the trigger, or every UPDATE or DELETE by the owner or DBA, is logged: a superuser-equivalent session can turn off its own audit."
+    error_message = "README must not claim that every way past the trigger, or every UPDATE or DELETE by the owner or DBA, is logged: a session that can turn off its own audit logging gets past it with no log line."
+  }
+}
+
+# "Non-superuser" is the wrong qualifier for "every way past the trigger is DDL
+# and logged". The Aurora master user is not a superuser, yet the README treats
+# it as able to turn off its own audit. And on PostgreSQL 16 a NOSUPERUSER role
+# granted SET ON PARAMETER pgaudit.log, pgaudit.role gets past the trigger with
+# no log line. Checked on a local PostgreSQL 16.15 with pgaudit 16.0: after that
+# grant, the owner role's SET pgaudit.log = 'none'; SET pgaudit.role = '';
+# DISABLE TRIGGER, TRUNCATE and UPDATE wrote 0 AUDIT lines (the GRANT itself was
+# logged once, class ROLE); without it, 2 lines (DDL ALTER TABLE, OBJECT UPDATE).
+run "bypass_qualifier_is_who_can_turn_off_audit" {
+  command = plan
+
+  assert {
+    condition     = length(regexall("(?i)non-superuser\\s+role", file("${path.module}/README.md"))) == 0
+    error_message = "README: 'non-superuser role' is the wrong qualifier: the master user is not a superuser, and a NOSUPERUSER role granted SET ON PARAMETER pgaudit.log, pgaudit.role turns off its own audit."
+  }
+
+  assert {
+    condition     = length(regexall("(?i)every\\s+way\\s+past\\s+the\\s+trigger\\s+by\\s+a\\s+role\\s+that\\s+cannot\\s+turn\\s+off\\s+audit\\s+logging\\s+for\\s+its\\s+own\\s+session\\s+is\\s+DDL\\s+and\\s+logged", one(regex("(?s)\n10\\. (.*?)\n11\\. ", file("${path.module}/README.md"))))) == 1
+    error_message = "README drill check 10: every way past the trigger by a role that cannot turn off audit logging for its own session is DDL and logged."
+  }
+
+  assert {
+    condition = alltrue([
+      for needle in ["superuser", "`rds_superuser`", "`GRANT SET ON PARAMETER`", "`pgaudit.log`", "`pgaudit.role`", "`PUBLIC`"] :
+      strcontains(one(regex("(?s)Run\\s+by\\s+a\\s+role\\s+that\\s+cannot\\s+turn\\s+off\\s+audit\\s+logging\\s+for\\s+its\\s+own\\s+session\\s+\\((.*?)\\),\\s+every", file("${path.module}/README.md"))), needle)
+    ])
+    error_message = "README: define a role that cannot turn off audit logging for its own session: not a superuser, not in rds_superuser, no GRANT SET ON PARAMETER on pgaudit.log or pgaudit.role (to it, a role it is in, or PUBLIC)."
+  }
+
+  assert {
+    condition = alltrue([
+      for needle in ["GRANT SET ON PARAMETER pgaudit.log, pgaudit.role TO <owner>", "`NOSUPERUSER`", "class `ROLE`"] :
+      strcontains(one(regex("(?s)\n```\n\nThe default privileges give the runtime role(.*?)\n## TLS to the database", file("${path.module}/README.md"))), needle)
+    ])
+    error_message = "README: name the NOSUPERUSER role with GRANT SET ON PARAMETER pgaudit.log, pgaudit.role among the sessions that get past the trigger with no log line (the GRANT is logged once, class ROLE)."
   }
 }

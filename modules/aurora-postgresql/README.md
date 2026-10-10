@@ -88,7 +88,7 @@ Examples: [`examples/aurora-postgresql`](../../examples/aurora-postgresql/main.t
 
 ## Tests
 
-`terraform test` (Terraform >= 1.7, mock AWS provider, no credentials) in [`tests/`](tests): `rds.force_ssl=1`, storage encrypted, deletion protection on, rotating CMK, observability tag; reserved user rejected; JDBC URLs use `sslmode=verify-full` with the mounted CA bundle (`tls_verify_full.tftest.hcl`, `command = apply` against the mock provider); KMS split (`kms_split.tftest.hcl`: storage key untagged, every secret on the secrets key, one key for both rejected); PostgreSQL 16 bootstrap order and `pgaudit.role` (`role_bootstrap.tftest.hcl`, `pgaudit.tftest.hcl`); audit-table convention text (`audit_table_convention.tftest.hcl`: no `TRUNCATE` grant to `rds_pgaudit`, `ENABLE ALWAYS` `BEFORE TRUNCATE` trigger, bypasses through the shared function, partitions, a superuser-equivalent session that turns off its own pgaudit and the compensating-control gate, drill checks 4 and 10).
+`terraform test` (Terraform >= 1.7, mock AWS provider, no credentials) in [`tests/`](tests): `rds.force_ssl=1`, storage encrypted, deletion protection on, rotating CMK, observability tag; reserved user rejected; JDBC URLs use `sslmode=verify-full` with the mounted CA bundle (`tls_verify_full.tftest.hcl`, `command = apply` against the mock provider); KMS split (`kms_split.tftest.hcl`: storage key untagged, every secret on the secrets key, one key for both rejected); PostgreSQL 16 bootstrap order and `pgaudit.role` (`role_bootstrap.tftest.hcl`, `pgaudit.tftest.hcl`); audit-table convention text (`audit_table_convention.tftest.hcl`: no `TRUNCATE` grant to `rds_pgaudit`, `ENABLE ALWAYS` `BEFORE TRUNCATE` trigger, bypasses through the shared function, partitions, a session that turns off its own audit logging (superuser, `rds_superuser`, `SET ON PARAMETER` grant) and the compensating-control gate, drill checks 4 and 10).
 Run `terraform init -backend=false && terraform test` in this directory; CI runs it through
 `scripts/ci/terraform-validate-all.sh`.
 
@@ -154,7 +154,7 @@ ALTER TABLE <schema>.<audit_table> ENABLE ALWAYS TRIGGER <audit_table>_truncate_
 
 The default privileges give the runtime role `UPDATE, DELETE` (never `TRUNCATE`); the `REVOKE` makes the audit table
 append-only for the pods. The `GRANT` makes any `UPDATE` or `DELETE` that still happens (owner, DBA) an
-`AUDIT: OBJECT` line, unless a superuser-equivalent session has cleared its own `pgaudit.role` (below). The trigger
+`AUDIT: OBJECT` line, unless the session has turned off its own audit logging (below). The trigger
 refuses `TRUNCATE` of the table it is on by anyone, the owner and the master user included. `ENABLE ALWAYS` makes it
 fire under `session_replication_role = replica` too, where an ordinary trigger is skipped.
 
@@ -167,20 +167,26 @@ Getting past the trigger takes DDL, and not only DDL that names the audit table:
   names no audit table;
 - `DROP TABLE` on the audit table or one of its partitions, which removes the rows outright.
 
-Run by a non-superuser role such as the schema owner, every one of these is logged as `AUDIT: SESSION` class
-`DDL` (the default `pgaudit.log` includes `ddl`). Log alarms (CloudWatch metric filters on the `postgresql` log
+Run by a role that cannot turn off audit logging for its own session (not a superuser, not a member of
+`rds_superuser`, and no `GRANT SET ON PARAMETER` on `pgaudit.log` or `pgaudit.role` to it, to a role it is in or to
+`PUBLIC`), every one of these is logged as `AUDIT: SESSION` class `DDL` (the default `pgaudit.log` includes `ddl`).
+The schema owner is meant to be such a role. Log alarms (CloudWatch metric filters on the `postgresql` log
 group, owned by the observability repository) should match `AUDIT: OBJECT` on the audit tables, and
 any `AUDIT: SESSION` line of class `DDL` (or `ROLE`) outside a migration window: that is the `TRUNCATE` precursor to
 alert on. A filter that matches only statements naming an audit table misses the function replacement.
 
-A superuser-equivalent session can get past the trigger without any log line. `pgaudit.log` and `pgaudit.role` are
-superuser-only settings that such a session may change for itself, and `SET` is class `MISC`, which `ddl,role` does
-not log. After `SET pgaudit.log = 'none'; SET pgaudit.role = '';` the statements above, and any `UPDATE` or `DELETE`
-on an audit table, write no `AUDIT` line. On a local PostgreSQL 16.15 with pgaudit, a superuser session ran
-`DISABLE TRIGGER`, `CREATE OR REPLACE FUNCTION`, `TRUNCATE` and `UPDATE` that way with 0 `AUDIT` lines, while the
-owner role got `permission denied to set parameter "pgaudit.log"` (and `"pgaudit.role"`) and its `DISABLE TRIGGER`
-and `UPDATE` were logged. On Aurora the master user is a member of `rds_superuser`, not a superuser; drill check 10
-records whether it can change these two settings. Until that check shows that it cannot, treat it as able to.
+A session that can turn off its own audit logging can get past the trigger without any log line. `pgaudit.log` and
+`pgaudit.role` are superuser-only settings, which a superuser, and on PostgreSQL 16 any role granted
+`SET ON PARAMETER` on them, may change for its own session, and `SET` is class `MISC`, which `ddl,role` does not
+log. After `SET pgaudit.log = 'none'; SET pgaudit.role = '';` the statements above, and any `UPDATE` or `DELETE` on
+an audit table, write no `AUDIT` line. On a local PostgreSQL 16.15 with pgaudit 16.0, a superuser session ran
+`DISABLE TRIGGER`, `CREATE OR REPLACE FUNCTION`, `TRUNCATE` and `UPDATE` that way with 0 `AUDIT` lines. So did a
+`NOSUPERUSER` owner role after `GRANT SET ON PARAMETER pgaudit.log, pgaudit.role TO <owner>` (`DISABLE TRIGGER`,
+`TRUNCATE`, `UPDATE`: 0 lines; the `GRANT` itself was logged once, class `ROLE`, which the alarm above matches
+outside a migration window). Without that grant the owner role got `permission denied to set parameter
+"pgaudit.log"` (and `"pgaudit.role"`) and its `DISABLE TRIGGER` and `UPDATE` were logged. On Aurora the master user
+is a member of `rds_superuser`, not a superuser; drill check 10 records whether it can change these two settings.
+Until that check shows that it cannot, treat it as able to.
 
 Compensating control, a pre-production gate owned by platform delivery. This module creates the master credential as
 an RDS-managed secret (`manage_master_user_password`, output `master_user_secret_arn`) and builds neither
@@ -328,8 +334,9 @@ Checks for the products-catalog history guard, run as the RDS master user on Aur
       of class `DDL`, command `ALTER TABLE`, in CloudWatch;
     - `BEGIN; CREATE OR REPLACE FUNCTION <schema>.audit_truncate_refused() RETURNS trigger LANGUAGE plpgsql AS $$
       BEGIN RETURN NULL; END $$; ROLLBACK;` writes an `AUDIT: SESSION` line of class `DDL`, command
-      `CREATE FUNCTION`, that names no audit table. Every way past the trigger by a non-superuser role is DDL and
-      logged, but not always as a statement that names the table. Re-apply the original function body afterwards if
+      `CREATE FUNCTION`, that names no audit table. Every way past the trigger by a role that cannot turn off audit
+      logging for its own session is DDL and logged, but not always as a statement that names the table. The master
+      user running this check may not be such a role (next step). Re-apply the original function body afterwards if
       anything was committed;
     - as the master user, in a new session: `SET pgaudit.log = 'none';` and `SET pgaudit.role = '';`. Record whether
       each one succeeds or fails with `permission denied to set parameter`. If `pgaudit.log` can be set, run the
