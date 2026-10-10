@@ -246,18 +246,70 @@ Checks for the products-catalog history guard, run as the RDS master user on Aur
       owner, open a second session and hold the history table's catalog row with
       `BEGIN; GRANT SELECT ON sc_of_open_products_catalog.product_history TO open_products_catalog_owner;`, leaving
       the transaction open. In the master session, either `SET lock_timeout = '1s'` before the call, which then fails
-      with `canceling statement due to lock timeout`, or leave the call blocked and end it from a third session with
-      `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE query LIKE '%fbx_history_guard.arm(%' AND pid <>
-      pg_backend_pid();` (use `hand_back_history_writer(` in the pattern for the hand-back). `ROLLBACK` the owner
-      session. Each call runs as one transaction, so the temporary grants roll back with it, and `verify()` still
-      returns `DISARMED` until an `arm` succeeds.
+      with `canceling statement due to lock timeout`, or leave the call blocked and end it from a third session, as
+      the master user and in the same database (use `hand_back_history_writer(` in the pattern for the hand-back):
+
+      ```sql
+      SELECT pid, pg_terminate_backend(pid)
+        FROM pg_stat_activity
+       WHERE datname = current_database()
+         AND usename = current_user
+         AND state = 'active'
+         AND wait_event_type = 'Lock'
+         AND query LIKE '%fbx_history_guard.arm(%'
+         AND pid <> pg_backend_pid();
+      ```
+
+      Expected: one row, with `t`. `pg_stat_activity` keeps the last statement of idle sessions and lists every
+      database, so the filters keep a finished `arm()` in an idle session, or a session elsewhere on the cluster, from
+      being ended. `(0 rows)` means no call was blocked and nothing was ended: check the owner session and run it again.
+      `ROLLBACK` the owner session. Each call runs as one transaction, so the temporary grants roll back with it, and
+      `verify()` still returns `DISARMED` until an `arm` succeeds.
 13. The guard's catalog lookups work without `USAGE` on the service schema. As the master user, check that it holds
-    none: `SELECT has_schema_privilege('sc_of_open_products_catalog', 'USAGE');` returns `f`. If it returns `t`, the
-    schema owner runs `REVOKE USAGE ON SCHEMA sc_of_open_products_catalog FROM <master user>`; a leftover membership
-    in the owner also gives `USAGE` (check 12). Then, still as the master user:
+    none: `SELECT has_schema_privilege('sc_of_open_products_catalog', 'USAGE');` returns `f`. If it returns `t`, list
+    where the `USAGE` comes from:
 
     ```sql
-    SELECT to_regclass('sc_of_open_products_catalog.product_history');  -- ERROR: permission denied for schema
+    SELECT coalesce(g.rolname, 'PUBLIC') AS usage_from, 'schema ACL' AS via
+      FROM pg_namespace n
+     CROSS JOIN aclexplode(coalesce(n.nspacl, acldefault('n', n.nspowner))) a
+      LEFT JOIN pg_roles g ON g.oid = a.grantee
+     WHERE n.nspname = 'sc_of_open_products_catalog'
+       AND a.privilege_type = 'USAGE'
+       AND (a.grantee = 0 OR pg_has_role(current_user, a.grantee, 'USAGE'))
+    UNION ALL
+    SELECT r.rolname, 'predefined role'
+      FROM pg_roles r
+     WHERE r.rolname IN ('pg_read_all_data', 'pg_write_all_data')
+       AND pg_has_role(current_user, r.oid, 'USAGE');
+    ```
+
+    Each row is one source, and each needs its own fix; `REVOKE ... FROM <master user>` removes only the first:
+    - the master user itself: the schema owner runs `REVOKE USAGE ON SCHEMA sc_of_open_products_catalog FROM <master
+      user>`;
+    - `PUBLIC`: the schema owner runs `REVOKE USAGE ON SCHEMA sc_of_open_products_catalog FROM PUBLIC` (the bootstrap
+      grants `USAGE` to the runtime role only);
+    - the schema owner, or another role the master user inherits: revoke that membership (a leftover owner membership
+      is the one check 12 looks for);
+    - `pg_read_all_data` or `pg_write_all_data`: either gives `USAGE` on every schema. Revoke it from whichever role
+      the master user inherits it through. If Aurora gives it through `rds_superuser` and it cannot be revoked, record
+      that: the master user then always has `USAGE`, this check cannot be run on that cluster, and the offline run
+      below is the evidence for it.
+
+    Run the query again until it returns `(0 rows)` and `has_schema_privilege` returns `f`. Then run this probe on its
+    own, outside a transaction and without `ON_ERROR_STOP`, because it is expected to fail:
+
+    ```sql
+    SELECT to_regclass('sc_of_open_products_catalog.product_history');
+    ```
+
+    Expected: `ERROR: permission denied for schema sc_of_open_products_catalog`. If it returns the table instead, the
+    master user still has `USAGE`; do not go on, because the rest of the check would pass without testing anything.
+    Then, still as the master user and with the guard disarmed, so that `arm()` runs its lookups as well
+    (`disarm('<ticket>')` first if `verify()` returns `armed, intact`; `arm()` on an armed guard raises
+    `already armed`):
+
+    ```sql
     SELECT fbx_history_guard.table_oid('product_history') IS NOT NULL,
            fbx_history_guard.table_oid('product') IS NOT NULL,
            fbx_history_guard.function_oid('product_history_record') IS NOT NULL,
@@ -265,7 +317,7 @@ Checks for the products-catalog history guard, run as the RDS master user on Aur
            fbx_history_guard.function_oid('product_history_insert_guard') IS NOT NULL,
            fbx_history_guard.function_oid('product_truncate_refused') IS NOT NULL,
            (SELECT fingerprint FROM fbx_history_guard.current_state()) IS NOT NULL;  -- t for every column
-    SELECT fbx_history_guard.arm('<ticket>');  -- if disarmed: armed, intact
+    SELECT fbx_history_guard.arm('<ticket>');  -- armed, intact
     SELECT fbx_history_guard.verify();         -- armed, intact
     SELECT has_schema_privilege('sc_of_open_products_catalog', 'USAGE');  -- still f
     ```
