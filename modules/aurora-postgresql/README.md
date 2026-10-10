@@ -84,7 +84,7 @@ Examples: [`examples/aurora-postgresql`](../../examples/aurora-postgresql/main.t
 | `secrets_kms_key_arn` | Secrets key (ADR-023) of every Secrets Manager secret of the database; pass it to `operator-db-access` `kms_key_arns` (stack variable `operator_db_import_kms_key_arns`). |
 | `app_secret_arn` | Application credential secret ARN. |
 | `app_secret_name` | Application credential secret name (Helm value externalSecret.remoteSecretName). |
-| `master_user_secret_arn` | RDS-managed admin credential, for the DBA bootstrap only. |
+| `master_user_secret_arn` | RDS-managed admin credential, for DBA work only: the bootstrap, the products-catalog history guard steps and the Aurora 16 drill (see the compensating control under Audit logging). |
 
 ## Tests
 

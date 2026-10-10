@@ -362,3 +362,26 @@ run "catalog_write_bypass_named" {
     error_message = "README Aurora 16 drill check 10 must record whether the master user can disable the trigger through pg_trigger."
   }
 }
+
+# The master credential has three uses (the compensating-control text lists
+# them: the DBA bootstrap, the products-catalog history guard steps and the
+# Aurora 16 drill), so its output must not say "for the DBA bootstrap only".
+run "master_secret_output_names_every_use" {
+  command = plan
+
+  assert {
+    condition = alltrue([
+      for needle in ["bootstrap", "history guard", "drill"] :
+      strcontains(one(regex("output \"master_user_secret_arn\" \\{\\s*description\\s*=\\s*\"([^\"]*)\"", file("${path.module}/outputs.tf"))), needle)
+    ]) && !strcontains(file("${path.module}/outputs.tf"), "for the DBA bootstrap only")
+    error_message = "outputs.tf master_user_secret_arn: name every use of the master credential (bootstrap, history guard steps, drill), not the DBA bootstrap only."
+  }
+
+  assert {
+    condition = alltrue([
+      for needle in ["bootstrap", "history guard", "drill"] :
+      strcontains(one(regex("\\| `master_user_secret_arn` \\| ([^|\\n]*) \\|", file("${path.module}/README.md"))), needle)
+    ]) && !strcontains(file("${path.module}/README.md"), "for the DBA bootstrap only")
+    error_message = "README outputs table master_user_secret_arn: name every use of the master credential (bootstrap, history guard steps, drill), not the DBA bootstrap only."
+  }
+}
