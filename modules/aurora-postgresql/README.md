@@ -219,8 +219,72 @@ Checks for the products-catalog history guard, run as the RDS master user on Aur
 10. With `pgaudit.role = rds_pgaudit` and an object grant to `rds_pgaudit` on a test table, an `UPDATE` on that table
     writes an `AUDIT: OBJECT` line to the PostgreSQL log: expected, the line is present in CloudWatch.
 11. The master user can `CREATE EVENT TRIGGER`: expected, it succeeds as `rds_superuser` on Aurora PostgreSQL 16.
+12. No writer membership is left after the master user arms the guard or hands the writer back. The master user is
+    not a superuser, so `set_history_writer()` grants it the schema owner and `open_products_catalog_history_writer`
+    `WITH INHERIT TRUE, SET TRUE` for the transfer only and revokes both before it returns. Run this as the master
+    user after each step below:
+
+    ```sql
+    SELECT r.rolname AS granted_role, a.rolname AS member, m.admin_option, m.inherit_option, m.set_option
+      FROM pg_auth_members m
+      JOIN pg_roles r ON r.oid = m.roleid
+      JOIN pg_roles a ON a.oid = m.member
+     WHERE r.rolname IN ('open_products_catalog_history_writer', 'open_products_catalog_owner')
+       AND a.rolname = current_user
+       AND (m.inherit_option OR m.set_option);
+    ```
+
+    Expected: `(0 rows)` every time. Without the last line, the query shows only the creator's grant on each role
+    (`admin_option = t`, `inherit_option = f`, `set_option = f`). The steps:
+    - arm path: `SELECT fbx_history_guard.arm('<ticket>');` returns `armed, intact`;
+    - hand-back path: `disarm('<ticket>')`, then `hand_back_history_writer('<ticket>')`, then `arm('<ticket>')`. Run
+      the query after the hand-back and again after the arm;
+    - failed arm: while disarmed, grant the writer to a scratch role `WITH INHERIT TRUE, SET FALSE`. `arm()` then
+      fails after the transfer with `cannot arm, <role> (granted by ...) can act as
+      open_products_catalog_history_writer`. Revoke the grant and drop the scratch role afterwards;
+    - failed or interrupted transfer, for both `arm` and `hand_back_history_writer`, while disarmed: as the schema
+      owner, open a second session and hold the history table's catalog row with
+      `BEGIN; GRANT SELECT ON sc_of_open_products_catalog.product_history TO open_products_catalog_owner;`, leaving
+      the transaction open. In the master session, either `SET lock_timeout = '1s'` before the call, which then fails
+      with `canceling statement due to lock timeout`, or leave the call blocked and end it from a third session with
+      `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE query LIKE '%fbx_history_guard.arm(%' AND pid <>
+      pg_backend_pid();` (use `hand_back_history_writer(` in the pattern for the hand-back). `ROLLBACK` the owner
+      session. Each call runs as one transaction, so the temporary grants roll back with it, and `verify()` still
+      returns `DISARMED` until an `arm` succeeds.
+13. The guard's catalog lookups work without `USAGE` on the service schema. As the master user, check that it holds
+    none: `SELECT has_schema_privilege('sc_of_open_products_catalog', 'USAGE');` returns `f`. If it returns `t`, the
+    schema owner runs `REVOKE USAGE ON SCHEMA sc_of_open_products_catalog FROM <master user>`; a leftover membership
+    in the owner also gives `USAGE` (check 12). Then, still as the master user:
+
+    ```sql
+    SELECT to_regclass('sc_of_open_products_catalog.product_history');  -- ERROR: permission denied for schema
+    SELECT fbx_history_guard.table_oid('product_history') IS NOT NULL,
+           fbx_history_guard.table_oid('product') IS NOT NULL,
+           fbx_history_guard.function_oid('product_history_record') IS NOT NULL,
+           fbx_history_guard.function_oid('product_history_append_only') IS NOT NULL,
+           fbx_history_guard.function_oid('product_history_insert_guard') IS NOT NULL,
+           fbx_history_guard.function_oid('product_truncate_refused') IS NOT NULL,
+           (SELECT fingerprint FROM fbx_history_guard.current_state()) IS NOT NULL;  -- t for every column
+    SELECT fbx_history_guard.arm('<ticket>');  -- if disarmed: armed, intact
+    SELECT fbx_history_guard.verify();         -- armed, intact
+    SELECT has_schema_privilege('sc_of_open_products_catalog', 'USAGE');  -- still f
+    ```
+
+    `table_oid()` and `function_oid()` read `pg_class` and `pg_proc` joined to `pg_namespace`. `verify()` reads
+    `pg_event_trigger` and `pg_trigger`. None of these needs `USAGE` on the schema. Run `verify()` again as the
+    runtime role, which is the credential the history-guard CronJob uses: expected, `armed, intact`.
 
 The SQL from before the PostgreSQL 16 change fails at step 1 with `must be able to SET ROLE "<owner>"`.
+
+Checks 12 and 13 also run offline on a local PostgreSQL 16 against products' `db/bootstrap/history-guard.sql`:
+- create a `CREATEROLE` admin and run the bootstrap above as that admin;
+- apply the service migrations as the schema owner;
+- run the guard file as the admin, without its `CREATE EVENT TRIGGER` and `DROP EVENT TRIGGER` lines, then create
+  the two event triggers as a superuser. On Aurora the master user does this itself (check 11).
+
+Locally the guard file's `ALTER ROLE ... NOSUPERUSER` is refused for a non-superuser with `Only roles with the
+SUPERUSER attribute may change the SUPERUSER attribute`, so drop `NOSUPERUSER` from that line locally. On Aurora,
+record whether the master user hits the same error.
 
 On Aurora 16 (dev, once per engine major): the same steps against a scratch database in the dev cluster, connected
 through the operator path (`stacks/platform` README, "Operator database access"); with pgaudit loaded, check that the
