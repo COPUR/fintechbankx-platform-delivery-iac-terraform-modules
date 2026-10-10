@@ -385,3 +385,29 @@ run "master_secret_output_names_every_use" {
     error_message = "README outputs table master_user_secret_arn: name every use of the master credential (bootstrap, history guard steps, drill), not the DBA bootstrap only."
   }
 }
+
+# The break-glass gate passed on one get-secret-value by name, which matches
+# only the literal-name value of the secretId list and never evaluates the ARN
+# prefix. A wrong prefix (the full ARN, or a trailing "-" left in) would still
+# pass, and retrievals by partial ARN would go unalarmed. The gate now calls
+# get-secret-value by name, by full ARN and by partial ARN.
+run "break_glass_gate_tests_every_secret_id_form" {
+  command = plan
+
+  assert {
+    condition = alltrue([
+      for needle in [
+        "--secret-id <master secret name>",
+        "--secret-id <master_user_secret_arn>",
+        "--secret-id <master_user_secret_arn without its last 7 characters>",
+      ] :
+      strcontains(one(regex("(?s)\n```\n\nThe default privileges give the runtime role(.*?)\n## TLS to the database", file("${path.module}/README.md"))), needle)
+    ])
+    error_message = "README: the break-glass gate passes only when get-secret-value by name, by full ARN and by partial ARN each raises the alarm."
+  }
+
+  assert {
+    condition     = length(regexall("(?i)The\\s+gate\\s+passes\\s+when\\s+one\\s", file("${path.module}/README.md"))) == 0
+    error_message = "README: one get-secret-value by name tests only the name value of the secretId pattern, not the ARN prefix."
+  }
+}

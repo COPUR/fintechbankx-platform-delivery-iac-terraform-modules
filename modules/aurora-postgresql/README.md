@@ -221,8 +221,8 @@ control below; no module or stack in this repository does yet. One of them is in
   drill) has a change ticket, and every retrieval of the `master_user_secret_arn` secret raises an alarm that is
   matched to one. The CloudTrail event is `eventSource` `secretsmanager.amazonaws.com`, `eventName`
   `GetSecretValue`, `requestParameters.secretId` the master secret. `secretId` holds what the caller passed (the
-  ARN, the ARN without its 6-character suffix, or the name `rds!cluster-...`); the prefix below matches both ARN
-  forms and the second value the name:
+  ARN, the partial ARN without the `-` and the 6-character suffix, or the name `rds!cluster-...`); the prefix below
+  matches both ARN forms and the second value the name:
 
   ```json
   {
@@ -240,8 +240,13 @@ control below; no module or stack in this repository does yet. One of them is in
 
   `GetSecretValue` is a read-only management event: an EventBridge rule receives it only in state
   `ENABLED_WITH_ALL_CLOUDTRAIL_MANAGEMENT_EVENTS`, and the account trail must record management read events. A
-  metric filter on the same three fields on the trail's CloudWatch log group works too. The gate passes when one
-  `aws secretsmanager get-secret-value --secret-id <master secret name>` raises the alarm.
+  metric filter on the same three fields on the trail's CloudWatch log group works too. The gate passes when each of
+  these three calls raises the alarm:
+  `aws secretsmanager get-secret-value --secret-id <master secret name>`,
+  `aws secretsmanager get-secret-value --secret-id <master_user_secret_arn>` and
+  `aws secretsmanager get-secret-value --secret-id <master_user_secret_arn without its last 7 characters>`. The
+  call by name tests only the second value; the two ARN calls test the prefix. A prefix that is the full ARN, or that
+  still ends in `-`, passes the full-ARN call and misses the partial-ARN call.
 
 Partitioned audit tables: a statement-level trigger on a partitioned table (or an inheritance parent) is not cloned
 to its partitions, and privileges are per relation, so `TRUNCATE <partition>` by the owner succeeds without any DDL
