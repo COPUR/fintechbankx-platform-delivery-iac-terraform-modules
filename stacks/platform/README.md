@@ -16,7 +16,7 @@ Composition root for one environment (one cell in one region, default `me-centra
 | [`irsa-role`](../../modules/irsa-role/README.md) | `<cluster>-obs-{prometheus,otel-gateway,tempo,loki,yace}` roles ([observability.tf](observability.tf)) |
 | [`aurora-postgresql`](../../modules/aurora-postgresql/README.md) | Small Grafana database (staging, prod), credential container `<env>/observability/grafana-db` |
 | [`github-oidc`](../../modules/github-oidc/README.md) | GitHub Actions OIDC provider and per-service ecr-push / deploy / tf-plan / tf-apply roles |
-| [`operator-access`](../../modules/operator-access/README.md), [`operator-db-access`](../../modules/operator-db-access/README.md) | Off by default (`operator_access_enabled`): SSM-only operator host in a private subnet, and per-service roles `<env>-<slug>-db-import` for `operator_db_import_service_slugs`, assumable by `operator_principal_arns` ([operator.tf](operator.tf)) |
+| [`operator-access`](../../modules/operator-access/README.md), [`operator-db-access`](../../modules/operator-db-access/README.md) | Off by default (`operator_access_enabled`): SSM-only operator host in a private subnet with KMS-encrypted session logs, the `ssmmessages`/`ec2messages`/`kms` interface endpoints, and per-service roles `<env>-<slug>-db-import` for `operator_db_import_service_slugs`, assumable by `operator_principal_arns` with a source identity; `db-import` secrets on each service's secrets key `operator_db_import_kms_key_arns` ([operator.tf](operator.tf), section "Operator database access") |
 
 [observability.tf](observability.tf) also creates SSE-KMS buckets `fintechbankx-<env>-obs-{traces,logs-chunks,logs-ruler}` (TLS-only, public access blocked). MSK enhanced monitoring defaults to `PER_BROKER`; Aurora and MSK are tagged `fintechbankx.io/observability=enabled` for YACE.
 
@@ -44,6 +44,9 @@ the bucket. First run of a new environment: plan once with `-var verify_terrafor
 `terraform_state_bucket_policy_json` (shown in the plan's outputs) in the bootstrap, then plan normally. To let this
 stack own the policy instead, set `manage_terraform_state_bucket_policy = true` and pass the bootstrap's existing
 statements in `terraform_state_bucket_policy_source_json` (the attachment replaces the whole bucket policy).
+The verification checks statement `Sid`s and `Effect = Deny` only, not their principals, actions or conditions: it is
+a tripwire against a bootstrap that forgot the merge, not a proof that the merged statements are correct (review the
+bucket policy itself for that).
 
 ## Outputs consumed elsewhere
 
@@ -59,8 +62,43 @@ statements in `terraform_state_bucket_policy_source_json` (the attachment replac
 | `platform_secrets_role_arn` | mesh repo: `external-secrets-platform` service account annotation, overlay parameter `PLATFORM_SECRETS_ROLE_ARN` (ClusterSecretStore `aws-secrets-manager-platform`) |
 | `vpc_cidr`, `private_subnet_cidrs`, `msk_security_group_id`, `msk_subnet_ids` | mesh repo `params.env` |
 | `ingress_tls_secret_name` | mesh repo: gateway certificate at Secrets Manager `<env>/platform/ingress-tls` (created and filled outside Terraform; no certificate material in this repository) |
-| `operator_security_group_id`, `operator_instance_id`, `operator_db_import_role_arns` | service repos: add the security group to the database `allowed_security_group_ids`; operators: `aws ssm start-session --target <instance id>` after assuming the db-import role |
+| `operator_security_group_id`, `operator_instance_id`, `operator_db_import_role_arns`, `operator_session_log_group_name` | service repos: add the security group to the database `allowed_security_group_ids`; operators: credential path in "Operator database access" |
 | `amp_remote_write_url`, `observability_role_arns`, `observability_buckets`, `grafana_db_secret_name` | observability repo (IRSA for `observability/{prometheus,otel-gateway,tempo,loki,yace}`) |
+
+## Operator database access
+
+Off by default. With `operator_access_enabled = true` the stack adds the interface endpoints Session Manager needs on a
+host without internet (`ssm`, `ssmmessages`, `ec2messages`) plus `kms`, `secretsmanager`, `sts` and `logs`
+(`vpc_interface_endpoints` keeps the defaults), creates the operator host with session logging
+([`operator-access`](../../modules/operator-access/README.md)) and, for `operator_db_import_service_slugs`, the
+`<env>-<slug>-db-import` roles and empty secrets ([`operator-db-access`](../../modules/operator-db-access/README.md)).
+`operator_db_import_kms_key_arns` must name each service's ADR-023 secrets key (its `aurora-postgresql` output
+`secrets_kms_key_arn`); the plan fails without it. `tests/operator.tftest.hcl` (mock providers) checks the endpoints
+and the key wiring.
+
+Credential path (the password never lands on the operator host):
+
+1. On the workstation, with the Identity Center permission-set session:
+   `aws sts assume-role --role-arn <operator_db_import_role_arns[slug]> --role-session-name <user>
+   --source-identity <user>`. The trust policy refuses the call without a source identity.
+2. With those credentials, read `<env>/<slug>/db-import` (`aws secretsmanager get-secret-value`) straight into the
+   environment of the `psql` (or `pg_restore`) process, for example `PGPASSWORD`; do not write it to a file.
+3. Open a port-forwarding session through the host (the permission set needs `ssm:StartSession` on the host and the
+   document `AWS-StartPortForwardingSessionToRemoteHost`):
+   `aws ssm start-session --target <operator_instance_id> --document-name AWS-StartPortForwardingSessionToRemoteHost
+   --parameters host=<writer endpoint>,portNumber=5432,localPortNumber=15432`.
+4. Connect from the workstation with certificate checks against the real endpoint name:
+   `psql "host=<writer endpoint> hostaddr=127.0.0.1 port=15432 dbname=<db> user=<import role> sslmode=verify-full
+   sslrootcert=<RDS CA bundle>"`. TLS runs end to end between the workstation and Aurora; the host only relays the
+   encrypted TCP stream and never sees the password or the data.
+
+Evidence trail: CloudTrail `AssumeRole`, `GetSecretValue` and `StartSession` carry the source identity; Session Manager
+writes shell sessions on the host to the KMS-encrypted log group `operator_session_log_group_name`
+(`manage_session_manager_preferences = true` lets this stack own the account/region preferences document); the
+database's pgaudit lines land in its `postgresql` log group (`operator-db-access` can grant the db-import role read
+access to it through `postgresql_log_group_arns`; not wired in this stack yet). Cluster-side, the External Secrets roles deny every
+`<env>/*/db-import` secret; a mesh admission rule rejecting ExternalSecrets with a remote key ending in `/db-import`
+is a mesh-repository follow-up.
 
 ## Image names
 

@@ -61,3 +61,4 @@ Examples: [`examples/network-vpc`](../../examples/network-vpc/main.tf).
 | `public_subnet_cidrs` | Public subnet CIDRs. |
 | `private_subnet_cidrs` | Private subnet CIDRs (EKS pods/nodes, MSK brokers, Aurora). For egress allow-lists such as Istio ServiceEntry/Sidecar. |
 | `intra_subnet_cidrs` | Intra subnet CIDRs. |
+| `interface_endpoint_services` | Service suffixes of the interface endpoints created (sorted). |

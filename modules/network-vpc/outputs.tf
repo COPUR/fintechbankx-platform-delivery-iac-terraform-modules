@@ -57,3 +57,8 @@ output "intra_subnet_cidrs" {
   description = "Intra subnet CIDRs."
   value       = aws_subnet.intra[*].cidr_block
 }
+
+output "interface_endpoint_services" {
+  description = "Service suffixes of the interface endpoints created (e.g. ssm, ssmmessages, kms)."
+  value       = sort(keys(aws_vpc_endpoint.interface))
+}

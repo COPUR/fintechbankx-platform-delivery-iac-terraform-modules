@@ -69,3 +69,32 @@ variable "tags" {
   description = "Resource tags."
   default     = {}
 }
+
+variable "session_logging_enabled" {
+  type        = bool
+  description = "Create the KMS-encrypted CloudWatch log group /aws/ssm/<name>/sessions (dedicated rotating CMK) and let the host write session logs to it."
+  default     = true
+}
+
+variable "session_log_retention_days" {
+  type        = number
+  description = "Retention of the session log group."
+  default     = 365
+}
+
+variable "manage_session_manager_preferences" {
+  type        = bool
+  description = "Create the account/region Session Manager preferences document SSM-SessionManagerRunShell pointing at the session log group and key. Off by default: there is one per account and region, and it may already exist."
+  default     = false
+}
+
+variable "session_idle_timeout_minutes" {
+  type        = number
+  description = "Session Manager idle timeout (minutes) in the preferences document."
+  default     = 20
+
+  validation {
+    condition     = var.session_idle_timeout_minutes >= 1 && var.session_idle_timeout_minutes <= 60
+    error_message = "session_idle_timeout_minutes must be 1..60."
+  }
+}

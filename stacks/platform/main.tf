@@ -29,7 +29,10 @@ module "network" {
   az_count           = var.az_count
   single_nat_gateway = var.single_nat_gateway
   eks_cluster_name   = local.name
-  tags               = local.tags
+  # Operator access adds ssmmessages and ec2messages (Session Manager from the
+  # private operator host) and kms (session encryption, secrets key decrypt).
+  interface_endpoints = distinct(concat(var.vpc_interface_endpoints, var.operator_access_enabled ? ["ssm", "ssmmessages", "ec2messages", "kms", "secretsmanager", "sts", "logs"] : []))
+  tags                = local.tags
 }
 
 module "eks" {

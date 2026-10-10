@@ -276,6 +276,30 @@ variable "operator_db_import_service_slugs" {
   default     = []
 }
 
+variable "operator_db_import_kms_key_arns" {
+  type        = map(string)
+  description = "ADR-023 secrets key per slug in operator_db_import_service_slugs (the service's aurora-postgresql output secrets_kms_key_arn, tagged fintechbankx.io/secrets=true; never its storage key). Encrypts <env>/<slug>/db-import; required for every slug."
+  default     = {}
+}
+
+variable "vpc_interface_endpoints" {
+  type        = list(string)
+  description = "Interface endpoint service suffixes of the VPC. operator_access_enabled adds ssm, ssmmessages, ec2messages, kms, secretsmanager, sts and logs."
+  default     = ["ecr.api", "ecr.dkr", "sts", "secretsmanager", "ssm", "logs"]
+}
+
+variable "operator_session_log_retention_days" {
+  type        = number
+  description = "Retention of the KMS-encrypted Session Manager log group /aws/ssm/<name>/sessions."
+  default     = 365
+}
+
+variable "manage_session_manager_preferences" {
+  type        = bool
+  description = "Let the stack own the account/region Session Manager preferences document SSM-SessionManagerRunShell (session logs to the encrypted group, session data encrypted with its key). Off when another stack or the console owns it."
+  default     = false
+}
+
 variable "operator_principal_arns" {
   type        = list(string)
   description = "IAM Identity Center permission-set role ARNs allowed to assume the operator roles (required when operator_db_import_service_slugs is set)."

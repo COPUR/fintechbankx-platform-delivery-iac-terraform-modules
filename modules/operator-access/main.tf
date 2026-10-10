@@ -89,3 +89,130 @@ resource "aws_instance" "this" {
     ignore_changes = [ami]
   }
 }
+
+# --- Session Manager logging (evidence trail) -------------------------------
+# Shell sessions on the host stream to a CloudWatch log group encrypted with
+# a dedicated CMK, and session data is encrypted with the same key. Port
+# forwarding sessions carry no shell transcript: their record is the
+# CloudTrail StartSession event (with the caller's source identity) plus the
+# database's own pgaudit log.
+
+data "aws_region" "current" {}
+data "aws_caller_identity" "current" {}
+
+locals {
+  session_log_group_name = "/aws/ssm/${var.name}/sessions"
+  session_log_group_arn  = "arn:${data.aws_partition.current.partition}:logs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:log-group:${local.session_log_group_name}"
+}
+
+data "aws_iam_policy_document" "session_logs_key" {
+  count = var.session_logging_enabled ? 1 : 0
+
+  statement {
+    sid       = "AccountAdministration"
+    actions   = ["kms:*"]
+    resources = ["*"]
+    principals {
+      type        = "AWS"
+      identifiers = ["arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root"]
+    }
+  }
+
+  statement {
+    sid       = "CloudWatchLogsForTheSessionLogGroup"
+    actions   = ["kms:Encrypt", "kms:Decrypt", "kms:ReEncrypt*", "kms:GenerateDataKey*", "kms:Describe*"]
+    resources = ["*"]
+    principals {
+      type        = "Service"
+      identifiers = ["logs.${data.aws_region.current.name}.amazonaws.com"]
+    }
+    condition {
+      test     = "ArnEquals"
+      variable = "kms:EncryptionContext:aws:logs:arn"
+      values   = [local.session_log_group_arn]
+    }
+  }
+}
+
+resource "aws_kms_key" "session_logs" {
+  count                   = var.session_logging_enabled ? 1 : 0
+  description             = "${var.name} Session Manager session logs and session data"
+  enable_key_rotation     = true
+  deletion_window_in_days = 30
+  policy                  = data.aws_iam_policy_document.session_logs_key[0].json
+  tags                    = var.tags
+}
+
+resource "aws_kms_alias" "session_logs" {
+  count         = var.session_logging_enabled ? 1 : 0
+  name          = "alias/${var.name}-ssm-sessions"
+  target_key_id = aws_kms_key.session_logs[0].key_id
+}
+
+resource "aws_cloudwatch_log_group" "session_logs" {
+  count             = var.session_logging_enabled ? 1 : 0
+  name              = local.session_log_group_name
+  retention_in_days = var.session_log_retention_days
+  kms_key_id        = aws_kms_key.session_logs[0].arn
+  tags              = var.tags
+}
+
+# The SSM agent on the host writes the session stream and decrypts the
+# session data key.
+data "aws_iam_policy_document" "session_logs" {
+  count = var.session_logging_enabled ? 1 : 0
+
+  statement {
+    sid       = "WriteSessionLogs"
+    actions   = ["logs:CreateLogStream", "logs:PutLogEvents", "logs:DescribeLogStreams"]
+    resources = [local.session_log_group_arn, "${local.session_log_group_arn}:*"]
+  }
+
+  statement {
+    sid       = "DescribeLogGroups"
+    actions   = ["logs:DescribeLogGroups"]
+    resources = ["*"]
+  }
+
+  statement {
+    sid       = "SessionEncryption"
+    actions   = ["kms:Decrypt", "kms:GenerateDataKey"]
+    resources = [aws_kms_key.session_logs[0].arn]
+  }
+}
+
+resource "aws_iam_role_policy" "session_logs" {
+  count  = var.session_logging_enabled ? 1 : 0
+  name   = "ssm-session-logs"
+  role   = aws_iam_role.this.id
+  policy = data.aws_iam_policy_document.session_logs[0].json
+}
+
+# Session Manager preferences are one document per account and region
+# (SSM-SessionManagerRunShell). Opt-in: another stack or the console may own it.
+resource "aws_ssm_document" "session_preferences" {
+  count           = var.session_logging_enabled && var.manage_session_manager_preferences ? 1 : 0
+  name            = "SSM-SessionManagerRunShell"
+  document_type   = "Session"
+  document_format = "JSON"
+  tags            = var.tags
+
+  content = jsonencode({
+    schemaVersion = "1.0"
+    description   = "Session Manager preferences (${var.name}): KMS-encrypted sessions and CloudWatch session logs"
+    sessionType   = "Standard_Stream"
+    inputs = {
+      kmsKeyId                    = aws_kms_key.session_logs[0].arn
+      cloudWatchLogGroupName      = local.session_log_group_name
+      cloudWatchEncryptionEnabled = true
+      cloudWatchStreamingEnabled  = true
+      s3BucketName                = ""
+      s3KeyPrefix                 = ""
+      s3EncryptionEnabled         = true
+      idleSessionTimeout          = tostring(var.session_idle_timeout_minutes)
+      runAsEnabled                = false
+      runAsDefaultUser            = ""
+      shellProfile                = { linux = "", windows = "" }
+    }
+  })
+}

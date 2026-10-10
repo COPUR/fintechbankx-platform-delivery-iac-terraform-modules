@@ -156,3 +156,8 @@ output "operator_db_import_role_arns" {
   description = "Per-service db-import operator role ARNs (empty when off)."
   value       = length(module.operator_db_access) > 0 ? module.operator_db_access[0].role_arns : {}
 }
+
+output "operator_session_log_group_name" {
+  description = "KMS-encrypted CloudWatch log group of operator Session Manager sessions (null when operator access is off)."
+  value       = var.operator_access_enabled ? module.operator_access[0].session_log_group_name : null
+}
