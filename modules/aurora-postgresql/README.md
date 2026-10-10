@@ -88,7 +88,7 @@ Examples: [`examples/aurora-postgresql`](../../examples/aurora-postgresql/main.t
 
 ## Tests
 
-`terraform test` (Terraform >= 1.7, mock AWS provider, no credentials) in [`tests/`](tests): `rds.force_ssl=1`, storage encrypted, deletion protection on, rotating CMK, observability tag; reserved user rejected; JDBC URLs use `sslmode=verify-full` with the mounted CA bundle (`tls_verify_full.tftest.hcl`, `command = apply` against the mock provider); KMS split (`kms_split.tftest.hcl`: storage key untagged, every secret on the secrets key, one key for both rejected); PostgreSQL 16 bootstrap order and `pgaudit.role` (`role_bootstrap.tftest.hcl`, `pgaudit.tftest.hcl`); audit-table convention text (`audit_table_convention.tftest.hcl`: no `TRUNCATE` grant to `rds_pgaudit`, `ENABLE ALWAYS` `BEFORE TRUNCATE` trigger, bypasses through the shared function, partitions, drill checks 4 and 10).
+`terraform test` (Terraform >= 1.7, mock AWS provider, no credentials) in [`tests/`](tests): `rds.force_ssl=1`, storage encrypted, deletion protection on, rotating CMK, observability tag; reserved user rejected; JDBC URLs use `sslmode=verify-full` with the mounted CA bundle (`tls_verify_full.tftest.hcl`, `command = apply` against the mock provider); KMS split (`kms_split.tftest.hcl`: storage key untagged, every secret on the secrets key, one key for both rejected); PostgreSQL 16 bootstrap order and `pgaudit.role` (`role_bootstrap.tftest.hcl`, `pgaudit.tftest.hcl`); audit-table convention text (`audit_table_convention.tftest.hcl`: no `TRUNCATE` grant to `rds_pgaudit`, `ENABLE ALWAYS` `BEFORE TRUNCATE` trigger, bypasses through the shared function, partitions, a superuser-equivalent session that turns off its own pgaudit and the compensating-control gate, drill checks 4 and 10).
 Run `terraform init -backend=false && terraform test` in this directory; CI runs it through
 `scripts/ci/terraform-validate-all.sh`.
 
@@ -154,9 +154,9 @@ ALTER TABLE <schema>.<audit_table> ENABLE ALWAYS TRIGGER <audit_table>_truncate_
 
 The default privileges give the runtime role `UPDATE, DELETE` (never `TRUNCATE`); the `REVOKE` makes the audit table
 append-only for the pods. The `GRANT` makes any `UPDATE` or `DELETE` that still happens (owner, DBA) an
-`AUDIT: OBJECT` line. The trigger refuses `TRUNCATE` of the table it is on by anyone, the owner and the master user
-included. `ENABLE ALWAYS` makes it fire under `session_replication_role = replica` too, where an ordinary trigger is
-skipped.
+`AUDIT: OBJECT` line, unless a superuser-equivalent session has cleared its own `pgaudit.role` (below). The trigger
+refuses `TRUNCATE` of the table it is on by anyone, the owner and the master user included. `ENABLE ALWAYS` makes it
+fire under `session_replication_role = replica` too, where an ordinary trigger is skipped.
 
 Getting past the trigger takes DDL, and not only DDL that names the audit table:
 
@@ -167,11 +167,53 @@ Getting past the trigger takes DDL, and not only DDL that names the audit table:
   names no audit table;
 - `DROP TABLE` on the audit table or one of its partitions, which removes the rows outright.
 
-All of these are logged as `AUDIT: SESSION` class `DDL` (the default `pgaudit.log` includes `ddl`). Log alarms
-(CloudWatch metric filters on the `postgresql` log group, owned by the observability repository) should match
-`AUDIT: OBJECT` on the audit tables, and any `AUDIT: SESSION` line of class `DDL` (or `ROLE`) outside a migration
-window: that is the `TRUNCATE` precursor to alert on. A filter that matches only statements naming an audit table
-misses the function replacement.
+Run by a non-superuser role such as the schema owner, every one of these is logged as `AUDIT: SESSION` class
+`DDL` (the default `pgaudit.log` includes `ddl`). Log alarms (CloudWatch metric filters on the `postgresql` log
+group, owned by the observability repository) should match `AUDIT: OBJECT` on the audit tables, and
+any `AUDIT: SESSION` line of class `DDL` (or `ROLE`) outside a migration window: that is the `TRUNCATE` precursor to
+alert on. A filter that matches only statements naming an audit table misses the function replacement.
+
+A superuser-equivalent session can get past the trigger without any log line. `pgaudit.log` and `pgaudit.role` are
+superuser-only settings that such a session may change for itself, and `SET` is class `MISC`, which `ddl,role` does
+not log. After `SET pgaudit.log = 'none'; SET pgaudit.role = '';` the statements above, and any `UPDATE` or `DELETE`
+on an audit table, write no `AUDIT` line. On a local PostgreSQL 16.15 with pgaudit, a superuser session ran
+`DISABLE TRIGGER`, `CREATE OR REPLACE FUNCTION`, `TRUNCATE` and `UPDATE` that way with 0 `AUDIT` lines, while the
+owner role got `permission denied to set parameter "pgaudit.log"` (and `"pgaudit.role"`) and its `DISABLE TRIGGER`
+and `UPDATE` were logged. On Aurora the master user is a member of `rds_superuser`, not a superuser; drill check 10
+records whether it can change these two settings. Until that check shows that it cannot, treat it as able to.
+
+Compensating control, a pre-production gate owned by platform delivery. This module creates the master credential as
+an RDS-managed secret (`manage_master_user_password`, output `master_user_secret_arn`) and builds neither
+control below; no module or stack in this repository does yet. One of them is in place before production:
+
+- Aurora Database Activity Streams on the cluster: database activity goes to a KMS-encrypted Kinesis stream that no
+  database user can switch off (stopping it is the IAM action `rds:StopActivityStream`, which CloudTrail logs).
+  Check first that the cluster's instance class (Serverless v2) and engine version support it in the region.
+- The master credential as break-glass: every use (the DBA bootstrap, the products-catalog history guard steps, this
+  drill) has a change ticket, and every retrieval of the `master_user_secret_arn` secret raises an alarm that is
+  matched to one. The CloudTrail event is `eventSource` `secretsmanager.amazonaws.com`, `eventName`
+  `GetSecretValue`, `requestParameters.secretId` the master secret. `secretId` holds what the caller passed (the
+  ARN, the ARN without its 6-character suffix, or the name `rds!cluster-...`); the prefix below matches both ARN
+  forms and the second value the name:
+
+  ```json
+  {
+    "source": ["aws.secretsmanager"],
+    "detail-type": ["AWS API Call via CloudTrail"],
+    "detail": {
+      "eventSource": ["secretsmanager.amazonaws.com"],
+      "eventName": ["GetSecretValue"],
+      "requestParameters": {
+        "secretId": [{ "prefix": "<master_user_secret_arn without its last 7 characters>" }, "<master secret name>"]
+      }
+    }
+  }
+  ```
+
+  `GetSecretValue` is a read-only management event: an EventBridge rule receives it only in state
+  `ENABLED_WITH_ALL_CLOUDTRAIL_MANAGEMENT_EVENTS`, and the account trail must record management read events. A
+  metric filter on the same three fields on the trail's CloudWatch log group works too. The gate passes when one
+  `aws secretsmanager get-secret-value --secret-id <master secret name>` raises the alarm.
 
 Partitioned audit tables: a statement-level trigger on a partitioned table (or an inheritance parent) is not cloned
 to its partitions, and privileges are per relation, so `TRUNCATE <partition>` by the owner succeeds without any DDL
@@ -286,8 +328,17 @@ Checks for the products-catalog history guard, run as the RDS master user on Aur
       of class `DDL`, command `ALTER TABLE`, in CloudWatch;
     - `BEGIN; CREATE OR REPLACE FUNCTION <schema>.audit_truncate_refused() RETURNS trigger LANGUAGE plpgsql AS $$
       BEGIN RETURN NULL; END $$; ROLLBACK;` writes an `AUDIT: SESSION` line of class `DDL`, command
-      `CREATE FUNCTION`, that names no audit table. Every way past the trigger is DDL and logged, but not always as a
-      statement that names the table. Re-apply the original function body afterwards if anything was committed.
+      `CREATE FUNCTION`, that names no audit table. Every way past the trigger by a non-superuser role is DDL and
+      logged, but not always as a statement that names the table. Re-apply the original function body afterwards if
+      anything was committed;
+    - as the master user, in a new session: `SET pgaudit.log = 'none';` and `SET pgaudit.role = '';`. Record whether
+      each one succeeds or fails with `permission denied to set parameter`. If `pgaudit.log` can be set, run the
+      `DISABLE TRIGGER` statement above in that session and record whether an `AUDIT` line reaches CloudWatch; if
+      `pgaudit.role` can be set, do the same with an `UPDATE` on the table. If either `SET` succeeds, the master user
+      can get past the trigger (`pgaudit.log`) or change the audit table (`pgaudit.role`) without a log line, and the
+      compensating control above (Aurora Database Activity Streams, or the master credential as break-glass with the
+      CloudTrail `GetSecretValue` alarm) is a pre-production gate. Expected for the service's migration (owner) role:
+      both `SET`s fail with `permission denied to set parameter`, as on a local PostgreSQL 16.15.
 11. The master user can `CREATE EVENT TRIGGER`: expected, it succeeds as `rds_superuser` on Aurora PostgreSQL 16.
 12. No writer membership is left after the master user arms the guard or hands the writer back. The master user is
     not a superuser, so `set_history_writer()` grants it the schema owner and `open_products_catalog_history_writer`

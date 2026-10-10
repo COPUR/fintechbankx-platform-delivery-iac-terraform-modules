@@ -7,8 +7,8 @@
 # is not a session line either (class WRITE). The convention therefore grants
 # rds_pgaudit UPDATE, DELETE only and refuses TRUNCATE with a statement-level
 # BEFORE TRUNCATE trigger set ENABLE ALWAYS (fires under
-# session_replication_role = replica too); disabling or dropping it is DDL and
-# logged as AUDIT: SESSION class DDL.
+# session_replication_role = replica too); disabling or dropping it is DDL,
+# logged as AUDIT: SESSION class DDL when a non-superuser role does it.
 
 mock_provider "aws" {}
 
@@ -138,5 +138,59 @@ run "partitioned_audit_tables" {
   assert {
     condition     = strcontains(one(regex("(?s)\n10\\. (.*?)\n11\\. ", file("${path.module}/README.md"))), "CREATE OR REPLACE FUNCTION")
     error_message = "README Aurora 16 drill check 10 must show that replacing the shared raise function is logged as AUDIT: SESSION class DDL."
+  }
+}
+
+# pgaudit.log and pgaudit.role are superuser-only settings, and SET is class
+# MISC (not in ddl,role). Checked on a local PostgreSQL 16.15 with pgaudit:
+# after SET pgaudit.log = 'none'; SET pgaudit.role = ''; a superuser session's
+# DISABLE TRIGGER, CREATE OR REPLACE FUNCTION, TRUNCATE and UPDATE wrote 0
+# AUDIT lines, while the owner role got permission denied to set parameter and
+# its DISABLE TRIGGER and UPDATE were logged. The master user on Aurora is
+# rds_superuser, not a superuser: the drill records whether it can do the same,
+# and the README names the compensating control (pre-production gate).
+run "superuser_session_bypass_named" {
+  command = plan
+
+  assert {
+    condition = alltrue([
+      for needle in [
+        "SET pgaudit.log = 'none'",
+        "SET pgaudit.role = ''",
+        "permission denied to set parameter",
+        "Database Activity Streams",
+        "pre-production gate",
+        "platform delivery",
+        "master_user_secret_arn",
+        "secretsmanager.amazonaws.com",
+        "GetSecretValue",
+        "requestParameters",
+        "secretId",
+      ] :
+      strcontains(one(regex("(?s)\n```\n\nThe default privileges give the runtime role(.*?)\n## TLS to the database", file("${path.module}/README.md"))), needle)
+    ])
+    error_message = "README: name the superuser-equivalent session that clears pgaudit.log and pgaudit.role first, and the compensating control (Database Activity Streams, or the master credential as break-glass with a CloudTrail GetSecretValue alarm) as a pre-production gate owned by platform delivery."
+  }
+
+  assert {
+    condition = alltrue([
+      for needle in ["SET pgaudit.log = 'none'", "SET pgaudit.role = ''", "permission denied to set parameter", "Database Activity Streams", "GetSecretValue"] :
+      strcontains(one(regex("(?s)\n10\\. (.*?)\n11\\. ", file("${path.module}/README.md"))), needle)
+    ])
+    error_message = "README Aurora 16 drill check 10 must record whether the master user can change its own pgaudit.log and pgaudit.role, and name the compensating control if it can."
+  }
+
+  assert {
+    condition     = length(regexall("(?i)every way past the trigger\\s+by\\s+a\\s+non-superuser\\s+role\\s+is\\s+DDL\\s+and\\s+logged", file("${path.module}/README.md"))) == 1
+    error_message = "README drill check 10: every way past the trigger by a non-superuser role is DDL and logged."
+  }
+
+  assert {
+    condition = (
+      length(regexall("(?i)every way past the trigger\\s+is\\s+DDL\\s+and\\s+logged", file("${path.module}/README.md"))) == 0 &&
+      length(regexall("(?i)All of these are logged\\s+as", file("${path.module}/README.md"))) == 0 &&
+      length(regexall("\\(owner, DBA\\) an\\s+`AUDIT: OBJECT` line\\.", file("${path.module}/README.md"))) == 0
+    )
+    error_message = "README must not claim that every way past the trigger, or every UPDATE or DELETE by the owner or DBA, is logged: a superuser-equivalent session can turn off its own audit."
   }
 }
