@@ -168,7 +168,8 @@ Getting past the trigger takes DDL, and not only DDL that names the audit table:
 - `DROP TABLE` on the audit table or one of its partitions, which removes the rows outright.
 
 Run by a role that cannot turn off audit logging for its own session (not a superuser, not a member of
-`rds_superuser`, and no `GRANT SET ON PARAMETER` on `pgaudit.log` or `pgaudit.role` to it, to a role it is in or to
+`rds_superuser`, and no `GRANT SET ON PARAMETER` on any superuser-only setting, `pgaudit.log`, `pgaudit.role`,
+`pgaudit.log_client`, `pgaudit.log_level` and `log_min_messages` among them, to it, to a role it is in or to
 `PUBLIC`), every one of these is logged as `AUDIT: SESSION` class `DDL` (the default `pgaudit.log` includes `ddl`).
 The schema owner is meant to be such a role. Log alarms (CloudWatch metric filters on the `postgresql` log
 group, owned by the observability repository) should match `AUDIT: OBJECT` on the audit tables, and
@@ -184,9 +185,15 @@ an audit table, write no `AUDIT` line. On a local PostgreSQL 16.15 with pgaudit 
 `NOSUPERUSER` owner role after `GRANT SET ON PARAMETER pgaudit.log, pgaudit.role TO <owner>` (`DISABLE TRIGGER`,
 `TRUNCATE`, `UPDATE`: 0 lines; the `GRANT` itself was logged once, class `ROLE`, which the alarm above matches
 outside a migration window). Without that grant the owner role got `permission denied to set parameter
-"pgaudit.log"` (and `"pgaudit.role"`) and its `DISABLE TRIGGER` and `UPDATE` were logged. On Aurora the master user
-is a member of `rds_superuser`, not a superuser; drill check 10 records whether it can change these two settings.
-Until that check shows that it cannot, treat it as able to.
+"pgaudit.log"` (and `"pgaudit.role"`) and its `DISABLE TRIGGER` and `UPDATE` were logged.
+
+Other superuser-only settings keep every `AUDIT` line out of the PostgreSQL log while `pgaudit.log` and
+`pgaudit.role` stay at `ddl,role` and `rds_pgaudit`. Locally, a superuser session's `DISABLE TRIGGER`, `TRUNCATE`
+and `UPDATE` wrote 0 `AUDIT` lines after `SET log_min_messages = 'fatal';`, and 0 after
+`SET pgaudit.log_client = on; SET pgaudit.log_level = 'debug5';` (2 lines with neither). On Aurora the master user
+is a member of `rds_superuser`, not a superuser; drill check 10 records which of these settings it can change. Such
+settings are not limited to the ones named here, so treat the master user as able to get past the trigger without a
+log line whatever that check shows: the compensating control below is the gate, not the check.
 
 Compensating control, a pre-production gate owned by platform delivery. This module creates the master credential as
 an RDS-managed secret (`manage_master_user_password`, output `master_user_secret_arn`) and builds neither
@@ -338,14 +345,15 @@ Checks for the products-catalog history guard, run as the RDS master user on Aur
       logging for its own session is DDL and logged, but not always as a statement that names the table. The master
       user running this check may not be such a role (next step). Re-apply the original function body afterwards if
       anything was committed;
-    - as the master user, in a new session: `SET pgaudit.log = 'none';` and `SET pgaudit.role = '';`. Record whether
-      each one succeeds or fails with `permission denied to set parameter`. If `pgaudit.log` can be set, run the
-      `DISABLE TRIGGER` statement above in that session and record whether an `AUDIT` line reaches CloudWatch; if
-      `pgaudit.role` can be set, do the same with an `UPDATE` on the table. If either `SET` succeeds, the master user
-      can get past the trigger (`pgaudit.log`) or change the audit table (`pgaudit.role`) without a log line, and the
+    - as the master user, one new session per setting: `SET pgaudit.log = 'none';`, `SET pgaudit.role = '';`,
+      `SET log_min_messages = 'fatal';`, and `SET pgaudit.log_client = on;` with `SET pgaudit.log_level = 'debug5';`.
+      Record whether each one succeeds or fails with `permission denied to set parameter`. After each one that
+      succeeds, run the `DISABLE TRIGGER` statement above and an `UPDATE` on the table in that session and record
+      whether an `AUDIT` line reaches CloudWatch. The results describe the master user and do not lift the
       compensating control above (Aurora Database Activity Streams, or the master credential as break-glass with the
-      CloudTrail `GetSecretValue` alarm) is a pre-production gate. Expected for the service's migration (owner) role:
-      both `SET`s fail with `permission denied to set parameter`, as on a local PostgreSQL 16.15.
+      CloudTrail `GetSecretValue` alarm): it is a pre-production gate whatever they show, since these are not the
+      only settings that can keep `AUDIT` lines out of the log. Expected for the service's migration (owner) role:
+      each `SET` fails with `permission denied to set parameter`, as on a local PostgreSQL 16.15.
 11. The master user can `CREATE EVENT TRIGGER`: expected, it succeeds as `rds_superuser` on Aurora PostgreSQL 16.
 12. No writer membership is left after the master user arms the guard or hands the writer back. The master user is
     not a superuser, so `set_history_writer()` grants it the schema owner and `open_products_catalog_history_writer`

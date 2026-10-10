@@ -230,3 +230,46 @@ run "bypass_qualifier_is_who_can_turn_off_audit" {
     error_message = "README: name the NOSUPERUSER role with GRANT SET ON PARAMETER pgaudit.log, pgaudit.role among the sessions that get past the trigger with no log line (the GRANT is logged once, class ROLE)."
   }
 }
+
+# pgaudit.log and pgaudit.role are not the only superuser-only settings that
+# keep AUDIT lines out of the log. Checked on a local PostgreSQL 16.15 with
+# pgaudit 16.0, pgaudit.log and pgaudit.role left at ddl,role and rds_pgaudit:
+# a superuser session's DISABLE TRIGGER, TRUNCATE and UPDATE wrote 0 AUDIT lines
+# after SET log_min_messages = 'fatal', and 0 after SET pgaudit.log_client = on;
+# SET pgaudit.log_level = 'debug5' (2 with neither). A check that probes only
+# the two pgaudit SETs therefore cannot lift the compensating-control gate.
+run "other_settings_that_silence_audit" {
+  command = plan
+
+  assert {
+    condition = alltrue([
+      for needle in ["`pgaudit.log_client`", "`pgaudit.log_level`", "`log_min_messages`", "superuser-only setting"] :
+      strcontains(one(regex("(?s)Run\\s+by\\s+a\\s+role\\s+that\\s+cannot\\s+turn\\s+off\\s+audit\\s+logging\\s+for\\s+its\\s+own\\s+session\\s+\\((.*?)\\),\\s+every", file("${path.module}/README.md"))), needle)
+    ])
+    error_message = "README: a role that cannot turn off audit logging has no SET grant on any superuser-only setting, log_min_messages, pgaudit.log_client and pgaudit.log_level included."
+  }
+
+  assert {
+    condition = alltrue([
+      for needle in ["SET log_min_messages = 'fatal'", "SET pgaudit.log_client = on", "SET pgaudit.log_level = 'debug5'", "whatever that check shows"] :
+      strcontains(one(regex("(?s)\n```\n\nThe default privileges give the runtime role(.*?)\n## TLS to the database", file("${path.module}/README.md"))), needle)
+    ])
+    error_message = "README: name log_min_messages and pgaudit.log_client with pgaudit.log_level as settings that keep AUDIT lines out of the log, and keep the gate whatever drill check 10 shows."
+  }
+
+  assert {
+    condition = alltrue([
+      for needle in ["SET log_min_messages = 'fatal'", "SET pgaudit.log_client = on", "SET pgaudit.log_level = 'debug5'", "whatever they show"] :
+      strcontains(one(regex("(?s)\n10\\. (.*?)\n11\\. ", file("${path.module}/README.md"))), needle)
+    ])
+    error_message = "README Aurora 16 drill check 10 must probe log_min_messages and pgaudit.log_client with pgaudit.log_level too, and must not lift the gate."
+  }
+
+  assert {
+    condition = (
+      length(regexall("(?i)If\\s+either\\s+`SET`\\s+succeeds", file("${path.module}/README.md"))) == 0 &&
+      length(regexall("(?i)Until\\s+that\\s+check\\s+shows\\s+that\\s+it\\s+cannot", file("${path.module}/README.md"))) == 0
+    )
+    error_message = "README: the compensating control is a pre-production gate without condition; drill check 10's SETs do not lift it."
+  }
+}
