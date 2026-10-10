@@ -276,9 +276,12 @@ run "other_settings_that_silence_audit" {
 
 # Drill check 10 expected the owner role's SETs to fail but ran every step as
 # the master user, and did not look for SET ON PARAMETER grants. It now has a
-# step run as the owner role and a has_parameter_privilege query (checked on a
-# local PostgreSQL 16.15: no rows without grants; with a grant through a group
-# role, a grant to PUBLIC and rds_superuser membership it lists all three).
+# step run as the owner role and a pg_parameter_acl query. has_parameter_privilege
+# sees only inherited grants: on a local PostgreSQL 16.15 a grant to a role the
+# owner may only SET ROLE to (INHERIT FALSE, SET TRUE), and a grant on a setting
+# outside a fixed list, both gave (0 rows) while the owner turned off its audit.
+# The pg_parameter_acl query lists every SET grant on any setting to the owner,
+# to any role it is a member of, or to PUBLIC.
 run "drill_verifies_owner_cannot_turn_off_audit" {
   command = plan
 
@@ -286,14 +289,21 @@ run "drill_verifies_owner_cannot_turn_off_audit" {
     condition = alltrue([
       for needle in [
         "- as the service's migration (owner) role, in its own session",
-        "has_parameter_privilege('<owner role>', p, 'SET')",
+        "FROM pg_parameter_acl",
+        "aclexplode(a.paracl)",
+        "pg_has_role('<owner role>', e.grantee, 'MEMBER')",
         "pg_has_role('<owner role>', 'rds_superuser', 'MEMBER')",
         "(0 rows)",
         "class `ROLE`",
       ] :
       strcontains(one(regex("(?s)\n10\\. (.*?)\n11\\. ", file("${path.module}/README.md"))), needle)
     ])
-    error_message = "README Aurora 16 drill check 10 must run the SETs as the owner role and list the settings it may SET (has_parameter_privilege) and its rds_superuser membership: (0 rows)."
+    error_message = "README Aurora 16 drill check 10 must run the SETs as the owner role and list every SET grant reaching it (pg_parameter_acl, any membership) and its rds_superuser membership: (0 rows)."
+  }
+
+  assert {
+    condition     = !strcontains(one(regex("(?s)\n10\\. (.*?)\n11\\. ", file("${path.module}/README.md"))), "has_parameter_privilege(")
+    error_message = "README drill check 10 must not query has_parameter_privilege: it misses a grant reached by SET ROLE and settings outside a fixed list; list pg_parameter_acl instead."
   }
 
   assert {
@@ -344,6 +354,14 @@ run "catalog_write_bypass_named" {
   assert {
     condition     = length(regexall("(?i)(^|\\n)Getting\\s+past\\s+the\\s+trigger\\s+takes\\s+DDL", file("${path.module}/README.md"))) == 0
     error_message = "README: 'Getting past the trigger takes DDL' needs its qualifier: a superuser disables the trigger with catalog DML."
+  }
+
+  assert {
+    condition = (
+      length(regexall("(?i)any\\s+role\\s+but\\s+a\\s+superuser\\s+\\(below\\),\\s+getting\\s+past", file("${path.module}/README.md"))) == 0 &&
+      strcontains(file("${path.module}/README.md"), "For a role that cannot write the system catalogs")
+    )
+    error_message = "README: qualify 'takes DDL' by catalog write access; the Aurora master user is not a superuser, yet its catalog-DML path is open until drill check 10 shows otherwise."
   }
 
   assert {

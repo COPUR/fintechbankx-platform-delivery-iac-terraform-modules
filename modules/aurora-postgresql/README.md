@@ -158,8 +158,9 @@ append-only for the pods. The `GRANT` makes any `UPDATE` or `DELETE` that still 
 refuses `TRUNCATE` of the table it is on by anyone, the owner and the master user included. `ENABLE ALWAYS` makes it
 fire under `session_replication_role = replica` too, where an ordinary trigger is skipped.
 
-For any role but a superuser (below), getting past the trigger takes DDL, and not only DDL that names the audit
-table:
+For a role that cannot write the system catalogs (not a superuser, below; on Aurora, the master user only once drill
+check 10 shows that `rds_superuser` cannot), getting past the trigger takes DDL, and not only DDL that names the
+audit table:
 
 - `ALTER TABLE ... DISABLE TRIGGER` or `DROP TRIGGER` on the audit table;
 - `CREATE OR REPLACE FUNCTION <schema>.audit_truncate_refused()` with a body that does not raise, or
@@ -378,15 +379,20 @@ Checks for the products-catalog history guard, run as the RDS master user on Aur
       out of the log;
     - as the service's migration (owner) role, in its own session (logged in with its `db-migration` secret): each
       `SET` above fails with `permission denied to set parameter`, as on a local PostgreSQL 16.15. Then, as the
-      master user, list the settings the owner role may `SET` through a grant to it, to a role it is in or to
-      `PUBLIC`, and its membership in `rds_superuser`. Expected: `(0 rows)`.
+      master user, list every `SET` grant on any setting that reaches the owner role (a grant to it, to any role it
+      is a member of, whether inherited or only reachable by `SET ROLE`, or to `PUBLIC`), and its membership in
+      `rds_superuser`. Expected: `(0 rows)`. `has_parameter_privilege` is not enough: it sees only inherited grants
+      and one setting at a time.
 
       ```sql
-      SELECT p AS settable FROM unnest(ARRAY['pgaudit.log', 'pgaudit.role', 'pgaudit.log_client', 'pgaudit.log_level',
-                                             'log_min_messages']) AS p
-       WHERE has_parameter_privilege('<owner role>', p, 'SET')
+      SELECT a.parname AS settable, coalesce(g.rolname, 'PUBLIC') AS via
+        FROM pg_parameter_acl a
+       CROSS JOIN aclexplode(a.paracl) e
+        LEFT JOIN pg_roles g ON g.oid = e.grantee
+       WHERE e.privilege_type = 'SET'
+         AND (e.grantee = 0 OR pg_has_role('<owner role>', e.grantee, 'MEMBER'))
       UNION ALL
-      SELECT 'member of rds_superuser' WHERE pg_has_role('<owner role>', 'rds_superuser', 'MEMBER');
+      SELECT 'member of rds_superuser', NULL WHERE pg_has_role('<owner role>', 'rds_superuser', 'MEMBER');
       ```
 
       A later `GRANT SET ON PARAMETER` or `GRANT rds_superuser` to the owner role is logged as `AUDIT: SESSION`
