@@ -286,7 +286,7 @@ variable "pgaudit_bypass_gate" {
     option    = string
     drill_run = string
   })
-  description = "Record of the pre-production gate for the pgaudit bypass (README \"Audit logging\", compensating control): option \"break-glass\" and drill_run, the https link or id (CHG-1042, <owner>/<repo>#<number>) of the recorded drill run in which every call of the gate's test set raised the alarm. A cluster is non-production only when it has an environment marker (tag Environment, a dev-/staging-/prod- name prefix, a _dev/_staging/_prod database_name suffix) and every marker is dev or staging; Terraform refuses to plan any other cluster while this is null. \"activity-streams\" is refused: Aurora Serverless v2 does not support database activity streams."
+  description = "Record of the pre-production gate for the pgaudit bypass (README \"Audit logging\", compensating control): option \"break-glass\" and drill_run, the https link (dotted host and a path) or id (CHG-1042, <owner>/<repo>#<number>) of the recorded drill run in which every call of the gate's test set raised the alarm. Only the form is checked: \"<drill run>\", \"TBD\" and \"https://TBD\" are refused, but a well-formed link or id that names no drill run passes, so the reviewer of the plan checks the record. A cluster is non-production only when it has an environment marker (tag Environment, a dev-/staging-/prod- name prefix, a _dev/_staging/_prod database_name suffix) and every marker is dev or staging; Terraform refuses to plan any other cluster while this is null. \"activity-streams\" is refused: Aurora Serverless v2 does not support database activity streams."
   default     = null
 
   validation {
@@ -300,7 +300,7 @@ variable "pgaudit_bypass_gate" {
   }
 
   validation {
-    condition     = var.pgaudit_bypass_gate == null ? true : can(regex("^(https://[^\\s<>]+|[A-Z][A-Z0-9]+-[0-9]+|[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[0-9]+)$", var.pgaudit_bypass_gate.drill_run))
-    error_message = "pgaudit_bypass_gate.drill_run must link (https://...) or name (CHG-1042, <owner>/<repo>#<number>) the recorded drill run, not a placeholder."
+    condition     = var.pgaudit_bypass_gate == null ? true : can(regex("^(https://[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)+(:[0-9]+)?/[^\\s<>]+|[A-Z][A-Z0-9]+-[0-9]+|[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[0-9]+)$", var.pgaudit_bypass_gate.drill_run))
+    error_message = "pgaudit_bypass_gate.drill_run must be an https link with a dotted host and a path (https://tickets.example.com/browse/CHG-1042) or an id (CHG-1042, <owner>/<repo>#<number>) of the recorded drill run. Only the form is checked."
   }
 }

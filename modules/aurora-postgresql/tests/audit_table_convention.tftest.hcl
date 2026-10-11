@@ -570,3 +570,24 @@ run "gate_record_is_a_module_input" {
     error_message = "README Aurora 16 drill check 10 must point at pgaudit_bypass_gate, where the gate result is recorded."
   }
 }
+
+# The drill_run validation checks the form only: "<drill run>", "TBD" and
+# "https://TBD" are refused, a well-formed link or id that names no drill run
+# is not (tests/pgaudit_bypass_gate.tftest.hcl). The README must not claim that
+# placeholder records in general are refused.
+run "drill_run_check_is_form_only" {
+  command = plan
+
+  assert {
+    condition     = !strcontains(file("${path.module}/README.md"), "placeholder records are refused")
+    error_message = "README Tests: the drill_run validation refuses some placeholders (<drill run>, TBD, https://TBD), not every placeholder record."
+  }
+
+  assert {
+    condition = alltrue([
+      for needle in ["only the form of `drill_run`", "`https://TBD`", "reviewer of the plan"] :
+      strcontains(one(regex("(?s)\nWhere the result is recorded: (.*?)\n\n", file("${path.module}/README.md"))), needle)
+    ])
+    error_message = "README Where the result is recorded: say that Terraform checks only the form of drill_run (https://TBD refused, a well-formed link or id is not looked up) and that the reviewer of the plan checks the record."
+  }
+}

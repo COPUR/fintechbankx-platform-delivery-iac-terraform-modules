@@ -255,3 +255,43 @@ run "tbd_drill_run_refused" {
 
   expect_failures = [var.pgaudit_bypass_gate]
 }
+
+# drill_run is checked for form only. An https link needs a host with a dot
+# and a path: "https://TBD" (no dotted host) and a bare host with no path are
+# refused, as "<drill run>" and "TBD" are above. A well-formed link or id that
+# names no drill run still passes; the reviewer of the plan checks the record.
+run "https_drill_run_without_dotted_host_refused" {
+  command = plan
+
+  variables {
+    pgaudit_bypass_gate = { option = "break-glass", drill_run = "https://TBD" }
+  }
+
+  expect_failures = [var.pgaudit_bypass_gate]
+}
+
+run "https_drill_run_without_path_refused" {
+  command = plan
+
+  variables {
+    pgaudit_bypass_gate = { option = "break-glass", drill_run = "https://tickets.example.com/" }
+  }
+
+  expect_failures = [var.pgaudit_bypass_gate]
+}
+
+run "record_accepts_link_with_port" {
+  command = plan
+
+  variables {
+    name                = "prod-payment-request-to-pay-service"
+    database_name       = "db_pay_request_to_pay_prod"
+    app_secret_name     = "prod/payment-request-to-pay-service/db-app"
+    pgaudit_bypass_gate = { option = "break-glass", drill_run = "https://tickets.example.com:8443/browse/CHG-1042" }
+  }
+
+  assert {
+    condition     = output.pgaudit_bypass_gate_required == true
+    error_message = "drill_run accepts an https link with a dotted host, a port and a path."
+  }
+}
