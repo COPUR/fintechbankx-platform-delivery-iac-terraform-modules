@@ -18,6 +18,20 @@ locals {
   # server certificate chains to the RDS CA and names the endpoint.
   tls_params = "sslmode=verify-full&sslrootcert=${var.ssl_root_cert_path}"
 
+  # Pre-production gate for the pgaudit bypass (README "Audit logging",
+  # compensating control). No input says which environment a cluster is in, so
+  # the module reads the markers callers already set: tag Environment, a
+  # dev-/staging-/prod- name prefix and a _dev/_staging/_prod database_name
+  # suffix. Fail closed: a cluster is non-production only when it has at least
+  # one marker and every marker is dev or staging; any other cluster plans only
+  # with pgaudit_bypass_gate set.
+  environment_markers = compact([
+    lookup(var.tags, "Environment", ""),
+    try(regex("^(dev|staging|prod)-", var.name)[0], ""),
+    try(regex("_(dev|staging|prod)$", var.database_name)[0], ""),
+  ])
+  non_production = length(local.environment_markers) > 0 && alltrue([for m in local.environment_markers : contains(["dev", "staging"], m)])
+
   # Two-role DBA bootstrap (request-to-pay PR #14 review): the runtime role
   # never owns the schema, so a compromised pod cannot ALTER, DROP or TRUNCATE.
   #
@@ -195,6 +209,11 @@ resource "aws_rds_cluster" "this" {
     precondition {
       condition     = var.kms_key_arn == null || var.secrets_kms_key_arn == null || var.kms_key_arn != var.secrets_kms_key_arn
       error_message = "kms_key_arn (storage) and secrets_kms_key_arn (secrets) must be different keys (ADR-023)."
+    }
+
+    precondition {
+      condition     = var.pgaudit_bypass_gate != null || local.non_production
+      error_message = "pgaudit_bypass_gate is null and this cluster is not marked non-production (environment markers: [${join(", ", local.environment_markers)}]; non-production needs at least one of tag Environment, a name prefix dev-/staging- or a database_name suffix _dev/_staging, and no other value), so it is treated as production. Set pgaudit_bypass_gate = { option = \"break-glass\", drill_run = \"<link or id of the recorded drill run>\" } once every call of the gate's test set has raised the alarm (README \"Audit logging\", compensating control)."
     }
   }
 

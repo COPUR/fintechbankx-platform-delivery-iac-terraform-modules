@@ -149,6 +149,15 @@ variable "create_grafana_database" {
   default     = true
 }
 
+variable "grafana_database_pgaudit_bypass_gate" {
+  type = object({
+    option    = string
+    drill_run = string
+  })
+  description = "aurora-postgresql pgaudit_bypass_gate of the Grafana database: option \"break-glass\" and drill_run, the https link or id of the recorded drill run that passed the gate's test set (module README \"Audit logging\", compensating control). The prod plan is refused while this is null and create_grafana_database is true; dev and staging need none."
+  default     = null
+}
+
 variable "observability_log_retention_days" {
   type        = number
   description = "Expiry for objects in the Tempo and Loki buckets (backstop; the apps enforce their own retention)."

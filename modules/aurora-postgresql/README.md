@@ -59,6 +59,7 @@ Examples: [`examples/aurora-postgresql`](../../examples/aurora-postgresql/main.t
 | `pgaudit_enabled` | `bool` | `true` | Preload `pgaudit` next to the Aurora default (`shared_preload_libraries = pg_stat_statements,pgaudit`) and set `pgaudit.log`. Static: enabling it on an existing cluster needs a reboot. |
 | `pgaudit_log_classes` | `list(string)` | `["ddl", "role"]` | `pgaudit.log` classes. |
 | `pgaudit_role` | `string` | `"rds_pgaudit"` | `pgaudit.role` (object audit); created by `role_bootstrap_sql` if missing. |
+| `pgaudit_bypass_gate` | `object({ option = string, drill_run = string })` | `null` | Record of the pre-production gate for the pgaudit bypass (Audit logging, compensating control): `option = "break-glass"` and `drill_run`, the https link or id of the passing drill run. Terraform refuses to plan while it is null unless the cluster is marked non-production (tag `Environment`, `name` prefix, `database_name` suffix: all `dev` or `staging`). `"activity-streams"` is refused: no activity streams on Aurora Serverless v2. |
 | `schema_name` | `string` | `null` | Service schema `sc_<ctx>_<cap>`; with the two role names renders `role_bootstrap_sql`. |
 | `app_role_name` | `string` | `null` | Runtime role (pods): `USAGE` + DML only. |
 | `migration_role_name` | `string` | `null` | Schema-owner role (Flyway only); must differ from `app_role_name`. |
@@ -85,10 +86,11 @@ Examples: [`examples/aurora-postgresql`](../../examples/aurora-postgresql/main.t
 | `app_secret_arn` | Application credential secret ARN. |
 | `app_secret_name` | Application credential secret name (Helm value externalSecret.remoteSecretName). |
 | `master_user_secret_arn` | RDS-managed admin credential, for DBA work only: the bootstrap, the products-catalog history guard steps and the Aurora 16 drill (see the compensating control under Audit logging). |
+| `pgaudit_bypass_gate_required` | True when the cluster counts as production (no environment marker, or one other than `dev` or `staging`), so `pgaudit_bypass_gate` must hold the gate record. |
 
 ## Tests
 
-`terraform test` (Terraform >= 1.7, mock AWS provider, no credentials) in [`tests/`](tests): `rds.force_ssl=1`, storage encrypted, deletion protection on, rotating CMK, observability tag; reserved user rejected; JDBC URLs use `sslmode=verify-full` with the mounted CA bundle (`tls_verify_full.tftest.hcl`, `command = apply` against the mock provider); KMS split (`kms_split.tftest.hcl`: storage key untagged, every secret on the secrets key, one key for both rejected); PostgreSQL 16 bootstrap order and `pgaudit.role` (`role_bootstrap.tftest.hcl`, `pgaudit.tftest.hcl`); audit-table convention text (`audit_table_convention.tftest.hcl`: no `TRUNCATE` grant to `rds_pgaudit`, `ENABLE ALWAYS` `BEFORE TRUNCATE` trigger, bypasses through the shared function, partitions, a session that turns off its own audit logging (superuser, `rds_superuser`, `SET ON PARAMETER` grant) and the compensating-control gate, drill checks 4 and 10).
+`terraform test` (Terraform >= 1.7, mock AWS provider, no credentials) in [`tests/`](tests): `rds.force_ssl=1`, storage encrypted, deletion protection on, rotating CMK, observability tag; reserved user rejected; JDBC URLs use `sslmode=verify-full` with the mounted CA bundle (`tls_verify_full.tftest.hcl`, `command = apply` against the mock provider); KMS split (`kms_split.tftest.hcl`: storage key untagged, every secret on the secrets key, one key for both rejected); PostgreSQL 16 bootstrap order and `pgaudit.role` (`role_bootstrap.tftest.hcl`, `pgaudit.tftest.hcl`); audit-table convention text (`audit_table_convention.tftest.hcl`: no `TRUNCATE` grant to `rds_pgaudit`, `ENABLE ALWAYS` `BEFORE TRUNCATE` trigger, bypasses through the shared function, partitions, a session that turns off its own audit logging (superuser, `rds_superuser`, `SET ON PARAMETER` grant) and the compensating-control gate with each option's pass condition and test set, drill checks 4 and 10); where the gate result is recorded (`pgaudit_bypass_gate.tftest.hcl`: a cluster not marked non-production is refused at plan until `pgaudit_bypass_gate` is set; Activity Streams and placeholder records are refused).
 Run `terraform init -backend=false && terraform test` in this directory; CI runs it through
 `scripts/ci/terraform-validate-all.sh`.
 
@@ -213,17 +215,69 @@ lines, while the owner role got `permission denied for table pg_trigger`. On Aur
 
 Compensating control, a pre-production gate owned by platform delivery. This module creates the master credential as
 an RDS-managed secret (`manage_master_user_password`, output `master_user_secret_arn`) and builds neither
-control below; no module or stack in this repository does yet. One of them is in place before production:
+control below; no module or stack in this repository does yet. One of them is in place, and has passed its test set
+in a non-production account, before production.
+
+Where the result is recorded: the module input `pgaudit_bypass_gate`, with `option` (`break-glass`) and `drill_run`
+(the https link or id, such as `CHG-1042` or `<owner>/<repo>#<number>`, of the drill-run record that lists each call
+of the test set and the alarm it raised). No input of this module says which environment a cluster is in, so it reads
+the markers callers already set: tag `Environment`, a `dev-`, `staging-` or `prod-` prefix of `name`, and a `_dev`,
+`_staging` or `_prod` suffix of `database_name`. A cluster is non-production only when it has at least one marker and
+every marker it has is `dev` or `staging`; Terraform refuses to plan every other cluster (no marker, `prod`, or any
+other value) while `pgaudit_bypass_gate` is null (`tests/pgaudit_bypass_gate.tftest.hcl`). A production cluster that
+carries only `dev` or `staging` markers is not caught: the markers are the caller's word.
 
 - Aurora Database Activity Streams on the cluster: database activity goes to a KMS-encrypted Kinesis stream that no
-  database user can switch off (stopping it is the IAM action `rds:StopActivityStream`, which CloudTrail logs).
-  Check first that the cluster's instance class (Serverless v2) and engine version support it in the region.
+  database user can switch off (stopping it is the IAM action `rds:StopActivityStream`, which CloudTrail logs). **Not
+  available on a cluster from this module.** AWS documents that "The following features from Aurora provisioned DB
+  instances currently aren't available for Amazon Aurora serverless: Database activity streams (DAS)" (Aurora User
+  Guide, requirements and limitations for Aurora Serverless v2), and its instance classes for activity streams on
+  Aurora PostgreSQL are `db.r*` and `db.x2g` classes only. Every instance here is `db.serverless`, so
+  `pgaudit_bypass_gate` refuses `option = "activity-streams"`. Not verified: whether a cluster that mixes provisioned
+  and Serverless v2 instances can start a stream (the documentation does not say). The engine is not the obstacle:
+  Middle East (UAE), `me-central-1`, has activity streams for Aurora PostgreSQL 16.1 and higher. For a cluster that can
+  use it, the pass condition is recorded from
+  `aws rds describe-db-clusters --db-cluster-identifier <cluster_identifier> --query 'DBClusters[0].[ActivityStreamStatus,ActivityStreamMode,ActivityStreamKmsKeyId]'`:
+  - `ActivityStreamStatus` is `started` (the other values are `stopped`, `starting` and `stopping`);
+  - `ActivityStreamMode` is `sync`: the session waits until each record is durable, which AWS describes as favouring
+    the accuracy of the stream over database performance (`async` does not wait);
+  - `ActivityStreamKmsKeyId` (a key ARN, key id, alias ARN or alias name) resolves with `aws kms describe-key` to an
+    enabled customer managed key (`KeyManager` `CUSTOMER`, `KeyState` `Enabled`) that is neither this module's storage
+    key nor its secrets key (outputs `kms_key_arn` and `secrets_kms_key_arn`), so reading the stream is granted apart
+    from the database's own keys.
+
+  And an alarm on the stop call, a write management event that a rule in the default `ENABLED` state receives. It has
+  no filter on `requestParameters.resourceArn`, so a stop on any cluster in the account raises it:
+
+  ```json
+  {
+    "source": ["aws.rds"],
+    "detail-type": ["AWS API Call via CloudTrail"],
+    "detail": {
+      "eventSource": ["rds.amazonaws.com"],
+      "eventName": ["StopActivityStream"]
+    }
+  }
+  ```
+
+  Test set, in a non-production account: the three values above read from a cluster with a started stream, then
+  `aws rds stop-activity-stream --resource-arn <non-production cluster ARN> --apply-immediately` raises the alarm.
+  Deleting the cluster also stops the stream (deletion protection is on by default).
 - The master credential as break-glass: every use (the DBA bootstrap, the products-catalog history guard steps, this
-  drill) has a change ticket, and every retrieval of the `master_user_secret_arn` secret raises an alarm that is
-  matched to one. The CloudTrail event is `eventSource` `secretsmanager.amazonaws.com`, `eventName`
+  drill) has a change ticket, and every event matched below raises an alarm that is matched to one. Retrieving the
+  secret is not the only way to the credential, so the alarm has two rules.
+
+  Secret rule. The CloudTrail event of a retrieval is `eventSource` `secretsmanager.amazonaws.com`, `eventName`
   `GetSecretValue`, `requestParameters.secretId` the master secret. `secretId` holds what the caller passed (the
   ARN, the partial ARN without the `-` and the 6-character suffix, or the name `rds!cluster-...`); the prefix below
-  matches both ARN forms and the second value the name:
+  matches both ARN forms and the second value the name. For a batch retrieval AWS documents that "Secrets Manager
+  generates CloudTrail GetSecretValue log entries for each secret you request" (API reference, `BatchGetSecretValue`),
+  and its list of CloudTrail entries has a `BatchGetSecretValue` entry as well. Which `secretId` the per-secret
+  entries carry is not documented, so the rule also matches the batch entry: by `secretIdList`, or by any filter,
+  since a filter (`owning-service` `rds`, a name prefix, a tag) selects the master secret without naming it. The rule
+  also matches `PutResourcePolicy` (another principal or account may then read the secret) and
+  `ReplicateSecretToRegions` (a replica is read in another Region, where this regional rule does not look) on the
+  master secret:
 
   ```json
   {
@@ -231,23 +285,109 @@ control below; no module or stack in this repository does yet. One of them is in
     "detail-type": ["AWS API Call via CloudTrail"],
     "detail": {
       "eventSource": ["secretsmanager.amazonaws.com"],
-      "eventName": ["GetSecretValue"],
-      "requestParameters": {
-        "secretId": [{ "prefix": "<master_user_secret_arn without its last 7 characters>" }, "<master secret name>"]
-      }
+      "$or": [
+        {
+          "eventName": ["GetSecretValue", "PutResourcePolicy", "ReplicateSecretToRegions"],
+          "requestParameters": {
+            "secretId": [{ "prefix": "<master_user_secret_arn without its last 7 characters>" }, "<master secret name>"]
+          }
+        },
+        {
+          "eventName": ["BatchGetSecretValue"],
+          "requestParameters": {
+            "secretIdList": [{ "prefix": "<master_user_secret_arn without its last 7 characters>" }, "<master secret name>"]
+          }
+        },
+        {
+          "eventName": ["BatchGetSecretValue"],
+          "requestParameters": { "filters": { "key": [{ "exists": true }] } }
+        }
+      ]
     }
   }
   ```
 
-  `GetSecretValue` is a read-only management event: an EventBridge rule receives it only in state
-  `ENABLED_WITH_ALL_CLOUDTRAIL_MANAGEMENT_EVENTS`, and the account trail must record management read events. A
-  metric filter on the same three fields on the trail's CloudWatch log group works too. The gate passes when each of
-  these three calls raises the alarm:
-  `aws secretsmanager get-secret-value --secret-id <master secret name>`,
-  `aws secretsmanager get-secret-value --secret-id <master_user_secret_arn>` and
-  `aws secretsmanager get-secret-value --secret-id <master_user_secret_arn without its last 7 characters>`. The
-  call by name tests only the second value; the two ARN calls test the prefix. A prefix that is the full ARN, or that
-  still ends in `-`, passes the full-ARN call and misses the partial-ARN call.
+  `GetSecretValue` and `BatchGetSecretValue` are read-only management events: an EventBridge rule receives them only
+  in state `ENABLED_WITH_ALL_CLOUDTRAIL_MANAGEMENT_EVENTS`, and the account trail must record management read events.
+  A metric filter with the same conditions on the trail's CloudWatch log group works too.
+
+  Cluster rule. `ModifyDBCluster` changes the master credential, or how it is reached, without any secret call: it
+  sets a new master password, rotates it (`rotateMasterUserPassword`), stops RDS managing it
+  (`manageMasterUserPassword` false, which RDS accepts only with a new `masterUserPassword`, and then deletes the
+  secret), manages it again under a key the caller picks (`masterUserSecretKmsKeyId`), or moves the master user to
+  IAM authentication (`masterUserAuthenticationType` `iam-db-auth`; the IAM token that then replaces the password is
+  generated without any API call).
+  `EnableHttpEndpoint` turns on the RDS Data API, which runs SQL with a secret ARN; this module never enables it.
+  CloudTrail records RDS request parameters in lower camel case (`dBInstanceIdentifier`, `masterUsername`) and a
+  password as `"masterUserPassword": "****"` (Aurora User Guide, CloudTrail example), so the key is present and an
+  `exists` match works. These are write management events, which a rule in the default `ENABLED` state receives:
+
+  ```json
+  {
+    "source": ["aws.rds"],
+    "detail-type": ["AWS API Call via CloudTrail"],
+    "detail": {
+      "eventSource": ["rds.amazonaws.com"],
+      "$or": [
+        { "eventName": ["ModifyDBCluster"], "requestParameters": { "masterUserPassword": [{ "exists": true }] } },
+        { "eventName": ["ModifyDBCluster"], "requestParameters": { "manageMasterUserPassword": [{ "exists": true }] } },
+        { "eventName": ["ModifyDBCluster"], "requestParameters": { "rotateMasterUserPassword": [{ "exists": true }] } },
+        { "eventName": ["ModifyDBCluster"], "requestParameters": { "masterUserSecretKmsKeyId": [{ "exists": true }] } },
+        { "eventName": ["ModifyDBCluster"], "requestParameters": { "masterUserAuthenticationType": [{ "exists": true }] } },
+        { "eventName": ["EnableHttpEndpoint"] }
+      ]
+    }
+  }
+  ```
+
+  The rule has no filter on `dBClusterIdentifier`: the parameter is not case-sensitive and CloudTrail keeps what the
+  caller passed, so an exact match could miss, and without it a cluster restored or cloned from this one is matched
+  too. The `ModifyDBCluster` key names follow the documented convention but are not shown in an AWS example; the test
+  set is what shows they match.
+
+  The gate passes when every call of this test set raises the alarm, in a non-production account against a cluster
+  from this module, in this order (the last item replaces the master secret):
+  1. `aws secretsmanager get-secret-value --secret-id <master secret name>`;
+  2. `aws secretsmanager get-secret-value --secret-id <master_user_secret_arn>`;
+  3. `aws secretsmanager get-secret-value --secret-id <master_user_secret_arn without its last 7 characters>`;
+  4. `aws secretsmanager batch-get-secret-value --secret-id-list <master_user_secret_arn>`;
+  5. `aws secretsmanager batch-get-secret-value --filters Key=owning-service,Values=rds`;
+  6. `aws rds modify-db-cluster --db-cluster-identifier <non-production cluster> --rotate-master-user-password --apply-immediately`;
+  7. `aws rds modify-db-cluster --db-cluster-identifier <non-production cluster> --master-user-authentication-type iam-db-auth --apply-immediately`,
+     then the same with `password` to undo it (if RDS refuses the change while it manages the password, record the
+     error and whether the alarm fired);
+  8. `aws rds enable-http-endpoint --resource-arn <non-production cluster ARN>`, then `disable-http-endpoint` with the
+     same ARN;
+  9. `aws rds modify-db-cluster --db-cluster-identifier <non-production cluster> --no-manage-master-user-password --master-user-password <throwaway password> --apply-immediately`,
+     then `aws rds modify-db-cluster --db-cluster-identifier <non-production cluster> --manage-master-user-password --master-user-secret-kms-key-id <secrets_kms_key_arn> --apply-immediately`.
+     Each of the two raises the alarm. RDS deletes the secret on the first and creates a new one on the second: run
+     `terraform apply` and point the secret rule at the new `master_user_secret_arn` and name afterwards.
+
+  The call by name tests only the second `secretId` value; the two ARN calls test the prefix. A prefix that is the
+  full ARN, or that still ends in `-`, passes the full-ARN call and misses the partial-ARN call. For calls 4 and 5 the
+  record names the entries CloudTrail wrote (`BatchGetSecretValue`, per-secret `GetSecretValue`, or both) and the
+  `secretId` of the per-secret ones. Call 9 cannot tell `manageMasterUserPassword` and `masterUserPassword` apart,
+  because RDS takes the first only with the second. Offline, the three patterns in this section compile with Event
+  Ruler 1.8.1 (AWS's open-source Java library for EventBridge-style event patterns), match a synthetic CloudTrail event
+  for each call above, and miss a `ModifyDBCluster` without these keys, `DisableHttpEndpoint`, `UpdateSecret` and
+  other secrets. That checks the pattern syntax, not the field names CloudTrail writes; only the test set checks those.
+
+  Out of scope, with the reason:
+  - copies of the data: `RestoreDBClusterFromSnapshot`, `RestoreDBClusterToPointInTime` (clones included),
+    `CopyDBClusterSnapshot`, `ModifyDBClusterSnapshotAttribute` and `StartExportTask` put the data on another cluster
+    or in S3 and leave this cluster's audit tables and audit lines as they are, which is what this gate protects.
+    Reading a copy is exfiltration, for the snapshot and storage-key controls (ADR-023). A password set on a restored
+    or cloned cluster is still matched by the cluster rule;
+  - the cluster's audit configuration through the RDS and CloudWatch APIs: `ModifyDBClusterParameterGroup` or
+    `ResetDBClusterParameterGroup` on its parameter group, `ModifyDBCluster` with `dBClusterParameterGroupName` or
+    `cloudwatchLogsExportConfiguration`, `CreateBlueGreenDeployment` with another `TargetDBClusterParameterGroupName`,
+    or a change to the `postgresql` log group. These switch off pgaudit, or its export, for every session; they are
+    made by an IAM principal, not with the master credential or in a database session, and the next plan of this
+    module shows them as drift. They need an alarm of their own, which this gate does not build or test;
+  - IAM authentication as the master user without `masterUserAuthenticationType`: it needs `rds_iam` granted to the
+    master user in the database, which takes a session with the master credential first (alarmed above) and is logged
+    as `AUDIT: SESSION` class `ROLE`, and an IAM policy that allows `rds-db:connect` as the master user, which no
+    module here writes.
 
 Partitioned audit tables: a statement-level trigger on a partitioned table (or an inheritance parent) is not cloned
 to its partitions, and privileges are per relation, so `TRUNCATE <partition>` by the owner succeeds without any DDL
@@ -375,8 +515,8 @@ Checks for the products-catalog history guard, run as the RDS master user on Aur
       and record whether it fails with `permission denied for table pg_trigger` (a superuser disables the trigger
       that way with no log line). The results describe the master user and do not lift the compensating control above
       (Aurora Database Activity Streams, or the master credential as break-glass with the CloudTrail `GetSecretValue`
-      alarm): it is a pre-production gate whatever they show, since these are not the only ways to keep `AUDIT` lines
-      out of the log;
+      alarm and the rest of its test set, recorded in `pgaudit_bypass_gate`): it is a pre-production gate
+      whatever they show, since these are not the only ways to keep `AUDIT` lines out of the log;
     - as the service's migration (owner) role, in its own session (logged in with its `db-migration` secret): each
       `SET` above fails with `permission denied to set parameter`, as on a local PostgreSQL 16.15. Then, as the
       master user, list every `SET` grant on any setting that reaches the owner role (a grant to it, to any role it

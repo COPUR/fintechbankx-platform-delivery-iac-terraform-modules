@@ -87,3 +87,8 @@ output "role_bootstrap_sql" {
   description = "DBA bootstrap SQL of the two-role pattern (run once as the RDS admin, in database_name): owner role owns the schema and runs Flyway; runtime role gets USAGE and DML only. No passwords: the DBA sets them from the db-migration and db-app secrets. null unless schema_name, app_role_name and migration_role_name are set."
   value       = local.role_bootstrap_sql
 }
+
+output "pgaudit_bypass_gate_required" {
+  description = "True when the cluster counts as production (no environment marker, or one that is not dev or staging), so pgaudit_bypass_gate must hold the gate record or the plan is refused (README \"Audit logging\", compensating control)."
+  value       = !local.non_production
+}

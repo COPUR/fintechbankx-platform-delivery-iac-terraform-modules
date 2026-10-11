@@ -429,3 +429,144 @@ run "break_glass_gate_tests_every_secret_id_form" {
     error_message = "README: one get-secret-value by name tests only the name value of the secretId pattern, not the ARN prefix."
   }
 }
+
+# Round-8 review: the gate had a pass test for one option only, and that option
+# watched secret retrieval but not other ways to the master credential.
+# AWS documentation (Aurora "Requirements and limitations for Aurora
+# Serverless v2"): "The following features from Aurora provisioned DB
+# instances currently aren't available for Amazon Aurora serverless: Database
+# activity streams (DAS)." This module creates only db.serverless instances,
+# so the Activity Streams option is recorded but cannot be chosen here.
+run "activity_streams_pass_condition_recorded" {
+  command = plan
+
+  assert {
+    condition = alltrue([
+      for needle in [
+        "aws rds describe-db-clusters --db-cluster-identifier <cluster_identifier>",
+        "`ActivityStreamStatus`",
+        "`started`",
+        "`ActivityStreamMode`",
+        "`sync`",
+        "`ActivityStreamKmsKeyId`",
+        "\"eventSource\": [\"rds.amazonaws.com\"]",
+        "\"eventName\": [\"StopActivityStream\"]",
+        "aws rds stop-activity-stream --resource-arn <non-production cluster ARN>",
+        "aren't available for Amazon Aurora serverless",
+        "`db.serverless`",
+      ] :
+      strcontains(one(regex("(?s)\nCompensating control, (.*?)\nPartitioned audit tables:", file("${path.module}/README.md"))), needle)
+    ])
+    error_message = "README compensating control: give Activity Streams a recorded pass condition (describe-db-clusters status started, mode sync, KMS key), a StopActivityStream alarm with a test call in a non-production account, and say that Aurora Serverless v2 does not support it."
+  }
+
+  assert {
+    condition     = !strcontains(file("${path.module}/README.md"), "Check first that the cluster's instance class (Serverless v2) and engine version support it in the region.")
+    error_message = "README: the Serverless v2 support of Activity Streams is checked against AWS documentation now; do not leave it as an open check."
+  }
+}
+
+# ModifyDBCluster can set, rotate or unmanage the master password, move it to
+# IAM authentication, or re-manage it under another key; none of these is a
+# GetSecretValue. CloudTrail records RDS request parameters in lower camel case
+# (dBInstanceIdentifier, masterUserPassword) and the password as "****" (AWS
+# Aurora user guide, CloudTrail example).
+run "break_glass_alarm_covers_master_password_changes" {
+  command = plan
+
+  assert {
+    condition = alltrue([
+      for needle in [
+        "\"eventName\": [\"ModifyDBCluster\"]",
+        "\"masterUserPassword\": [{ \"exists\": true }]",
+        "\"manageMasterUserPassword\": [{ \"exists\": true }]",
+        "\"rotateMasterUserPassword\": [{ \"exists\": true }]",
+        "\"masterUserSecretKmsKeyId\": [{ \"exists\": true }]",
+        "\"masterUserAuthenticationType\": [{ \"exists\": true }]",
+        "\"eventName\": [\"EnableHttpEndpoint\"]",
+        "\"masterUserPassword\": \"****\"",
+        "`dBClusterIdentifier`",
+        "not case-sensitive",
+        "aws rds modify-db-cluster --db-cluster-identifier <non-production cluster> --rotate-master-user-password --apply-immediately",
+        "--no-manage-master-user-password --master-user-password <throwaway password> --apply-immediately",
+        "--manage-master-user-password --master-user-secret-kms-key-id <secrets_kms_key_arn> --apply-immediately",
+        "--master-user-authentication-type iam-db-auth --apply-immediately",
+        "aws rds enable-http-endpoint --resource-arn <non-production cluster ARN>",
+      ] :
+      strcontains(one(regex("(?s)\nCompensating control, (.*?)\nPartitioned audit tables:", file("${path.module}/README.md"))), needle)
+    ])
+    error_message = "README break-glass alarm: match ModifyDBCluster with masterUserPassword, manageMasterUserPassword, rotateMasterUserPassword, masterUserSecretKmsKeyId or masterUserAuthenticationType, and EnableHttpEndpoint, and put a master-password change from a non-production account in the gate's test set."
+  }
+}
+
+# BatchGetSecretValue (AWS Secrets Manager API reference): "Secrets Manager
+# generates CloudTrail GetSecretValue log entries for each secret you request
+# when you call this action." The CloudTrail entries page also lists a
+# BatchGetSecretValue entry. What secretId the per-secret entries carry is not
+# documented, so the alarm matches the batch entry too, by id list or filter.
+run "break_glass_alarm_covers_batch_retrieval" {
+  command = plan
+
+  assert {
+    condition = alltrue([
+      for needle in [
+        "\"eventName\": [\"BatchGetSecretValue\"]",
+        "\"secretIdList\": [{ \"prefix\": \"<master_user_secret_arn without its last 7 characters>\" }, \"<master secret name>\"]",
+        "\"filters\": { \"key\": [{ \"exists\": true }] }",
+        "generates CloudTrail GetSecretValue log entries for each secret you request",
+        "aws secretsmanager batch-get-secret-value --secret-id-list <master_user_secret_arn>",
+        "aws secretsmanager batch-get-secret-value --filters Key=owning-service,Values=rds",
+        "every call",
+      ] :
+      strcontains(one(regex("(?s)\nCompensating control, (.*?)\nPartitioned audit tables:", file("${path.module}/README.md"))), needle)
+    ])
+    error_message = "README break-glass alarm: match BatchGetSecretValue (by secretIdList and by filters) as well as the per-secret GetSecretValue entries, and add a batch retrieval to the gate's test set."
+  }
+}
+
+run "other_paths_covered_or_out_of_scope" {
+  command = plan
+
+  assert {
+    condition = alltrue([
+      for needle in [
+        "\"PutResourcePolicy\"",
+        "\"ReplicateSecretToRegions\"",
+        "RestoreDBClusterFromSnapshot",
+        "RestoreDBClusterToPointInTime",
+        "ModifyDBClusterParameterGroup",
+        "`cloudwatchLogsExportConfiguration`",
+        "CreateBlueGreenDeployment",
+        "`rds_iam`",
+        "Out of scope",
+      ] :
+      strcontains(one(regex("(?s)\nCompensating control, (.*?)\nPartitioned audit tables:", file("${path.module}/README.md"))), needle)
+    ])
+    error_message = "README compensating control: cover secret resource-policy and replication changes, and name snapshot restores, parameter-group and log-export changes, blue/green deployments and rds_iam as covered or out of scope with the reason."
+  }
+}
+
+# The gate result is recorded in the module input pgaudit_bypass_gate; the plan
+# of a cluster not marked non-production is refused until it is set
+# (tests/pgaudit_bypass_gate.tftest.hcl).
+run "gate_record_is_a_module_input" {
+  command = plan
+
+  assert {
+    condition = alltrue([
+      for needle in ["`pgaudit_bypass_gate`", "`drill_run`", "`break-glass`", "refuses to plan", "`Environment`"] :
+      strcontains(one(regex("(?s)\nCompensating control, (.*?)\nPartitioned audit tables:", file("${path.module}/README.md"))), needle)
+    ])
+    error_message = "README compensating control: name pgaudit_bypass_gate (option, drill_run) as where the gate result is recorded, and say which clusters Terraform refuses to plan without it."
+  }
+
+  assert {
+    condition     = length(regexall("\\| `pgaudit_bypass_gate` \\|", file("${path.module}/README.md"))) == 1 && strcontains(file("${path.module}/variables.tf"), "variable \"pgaudit_bypass_gate\"")
+    error_message = "pgaudit_bypass_gate is a module input (variables.tf) listed in the README Inputs table."
+  }
+
+  assert {
+    condition     = strcontains(one(regex("(?s)\n10\\. (.*?)\n11\\. ", file("${path.module}/README.md"))), "`pgaudit_bypass_gate`")
+    error_message = "README Aurora 16 drill check 10 must point at pgaudit_bypass_gate, where the gate result is recorded."
+  }
+}

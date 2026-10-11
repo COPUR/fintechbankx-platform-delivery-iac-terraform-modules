@@ -129,3 +129,8 @@ github_services = {
 #   # secrets_kms_key_arn); required for every slug above.
 #   operator_db_import_kms_key_arns  = { "payment-request-to-pay-service" = "arn:aws:kms:me-central-1:111122223333:key/11111111-2222-3333-4444-555555555555" }
 operator_access_enabled = false
+
+# Grafana database (create_grafana_database defaults to true): the prod plan is
+# refused until the pre-production gate for the pgaudit bypass is recorded
+# (modules/aurora-postgresql README, "Audit logging", compensating control):
+#   grafana_database_pgaudit_bypass_gate = { option = "break-glass", drill_run = "<https link or id of the passing drill run>" }

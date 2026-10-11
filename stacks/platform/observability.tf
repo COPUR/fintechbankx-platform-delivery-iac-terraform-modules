@@ -174,5 +174,8 @@ module "grafana_db" {
   allowed_security_group_ids = [module.eks.cluster_security_group_id]
   app_secret_name            = "${var.environment}/observability/grafana-db"
   alarm_topic_arn            = var.alarm_topic_arn
-  tags                       = merge(local.tags, { Service = "grafana" })
+  # Pre-production gate record; the tag Environment = var.environment marks
+  # dev and staging non-production, so only prod needs it.
+  pgaudit_bypass_gate = var.grafana_database_pgaudit_bypass_gate
+  tags                = merge(local.tags, { Service = "grafana" })
 }
