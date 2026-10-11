@@ -631,3 +631,32 @@ run "gate_scope_is_clusters_from_this_module" {
     error_message = "README drill check 10: the gate result is recorded in pgaudit_bypass_gate only for a cluster from this module, not for products' own cluster."
   }
 }
+
+# AWS (Aurora User Guide, blue/green considerations): "Blue/green deployments
+# don't support managing master user passwords with AWS Secrets Manager." The
+# Secrets Manager limitations page lists "Amazon RDS Blue/Green Deployments"
+# as well. This module always sets manage_master_user_password = true, so on
+# its clusters CreateBlueGreenDeployment first needs ModifyDBCluster with
+# manageMasterUserPassword false (and a masterUserPassword), which the cluster
+# rule matches. It is not an IAM path that bypasses the alarm on its own.
+run "blue_green_needs_unmanaged_master_password" {
+  command = plan
+
+  assert {
+    condition     = !strcontains(one(regex("(?s)\n  - the cluster's audit configuration (.*?);\n", file("${path.module}/README.md"))), "CreateBlueGreenDeployment")
+    error_message = "README out of scope: CreateBlueGreenDeployment is not available on a cluster from this module while RDS manages the master password; do not list it with the IAM paths that switch off pgaudit without that condition."
+  }
+
+  assert {
+    condition = alltrue([
+      for needle in [
+        "don't support managing master user passwords with AWS Secrets Manager",
+        "`manage_master_user_password = true`",
+        "`manageMasterUserPassword` false",
+        "the cluster rule",
+      ] :
+      strcontains(one(regex("(?s)\n  - `CreateBlueGreenDeployment`(.*?);\n", file("${path.module}/README.md"))), needle)
+    ])
+    error_message = "README compensating control: say that blue/green deployments do not support RDS-managed master passwords, which this module always turns on, so the path first takes ModifyDBCluster with manageMasterUserPassword false, which the cluster rule matches."
+  }
+}

@@ -390,10 +390,17 @@ service moves to this module, or once its own cluster carries the same precondit
     or cloned cluster is still matched by the cluster rule;
   - the cluster's audit configuration through the RDS and CloudWatch APIs: `ModifyDBClusterParameterGroup` or
     `ResetDBClusterParameterGroup` on its parameter group, `ModifyDBCluster` with `dBClusterParameterGroupName` or
-    `cloudwatchLogsExportConfiguration`, `CreateBlueGreenDeployment` with another `TargetDBClusterParameterGroupName`,
-    or a change to the `postgresql` log group. These switch off pgaudit, or its export, for every session; they are
-    made by an IAM principal, not with the master credential or in a database session, and the next plan of this
-    module shows them as drift. They need an alarm of their own, which this gate does not build or test;
+    `cloudwatchLogsExportConfiguration`, or a change to the `postgresql` log group. These switch off pgaudit, or its
+    export, for every session; they are made by an IAM principal, not with the master credential or in a database
+    session, and the next plan of this module shows them as drift. They need an alarm of their own, which this gate
+    does not build or test;
+  - `CreateBlueGreenDeployment` with another `TargetDBClusterParameterGroupName` is not open on a cluster from this
+    module, which always sets `manage_master_user_password = true`. AWS documents that
+    "Blue/green deployments don't support managing master user passwords with AWS Secrets Manager" (Aurora User Guide,
+    blue/green considerations; the Secrets Manager limitations for Aurora list Blue/Green Deployments too). The path
+    therefore first takes `ModifyDBCluster` with `manageMasterUserPassword` false and a new `masterUserPassword`,
+    which the cluster rule above matches (test set call 9). Not verified: the error RDS returns for the blue/green call
+    while it manages the password;
   - IAM authentication as the master user without `masterUserAuthenticationType`: it needs `rds_iam` granted to the
     master user in the database, which takes a session with the master credential first (alarmed above) and is logged
     as `AUDIT: SESSION` class `ROLE`, and an IAM policy that allows `rds-db:connect` as the master user, which no
