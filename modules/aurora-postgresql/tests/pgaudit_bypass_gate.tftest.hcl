@@ -90,6 +90,71 @@ run "mixed_markers_count_as_production" {
   expect_failures = [aws_rds_cluster.this]
 }
 
+# Each marker source counts on its own: a staging- name prefix with no other
+# marker, and a _staging database_name suffix with no other marker, each mark
+# the cluster non-production. Without these runs, dropping the database_name
+# marker, or staging from either regex, left every run passing.
+run "name_prefix_alone_marks_non_production" {
+  command = plan
+
+  variables {
+    name            = "staging-payment-request-to-pay-service"
+    database_name   = "db_pay_request_to_pay"
+    app_secret_name = "staging/payment-request-to-pay-service/db-app"
+  }
+
+  assert {
+    condition     = output.pgaudit_bypass_gate_required == false
+    error_message = "A staging- name prefix alone marks the cluster non-production; it plans without a gate record."
+  }
+}
+
+run "database_name_suffix_alone_marks_non_production" {
+  command = plan
+
+  variables {
+    name            = "payment-request-to-pay-service"
+    database_name   = "db_pay_request_to_pay_staging"
+    app_secret_name = "staging/payment-request-to-pay-service/db-app"
+  }
+
+  assert {
+    condition     = output.pgaudit_bypass_gate_required == false
+    error_message = "A _staging database_name suffix alone marks the cluster non-production; it plans without a gate record."
+  }
+}
+
+# A prod marker from the name or from the database_name wins over a dev tag,
+# as a prod tag wins over dev name and database markers
+# (mixed_markers_count_as_production). Without these runs, dropping prod from
+# the name or database_name regex left every run passing while such a cluster
+# planned without a record.
+run "prod_name_prefix_next_to_dev_tag_refused" {
+  command = plan
+
+  variables {
+    name            = "prod-payment-request-to-pay-service"
+    database_name   = "db_pay_request_to_pay"
+    app_secret_name = "prod/payment-request-to-pay-service/db-app"
+    tags            = { Environment = "dev" }
+  }
+
+  expect_failures = [aws_rds_cluster.this]
+}
+
+run "prod_database_name_suffix_next_to_dev_tag_refused" {
+  command = plan
+
+  variables {
+    name            = "payment-request-to-pay-service"
+    database_name   = "db_pay_request_to_pay_prod"
+    app_secret_name = "prod/payment-request-to-pay-service/db-app"
+    tags            = { Environment = "dev" }
+  }
+
+  expect_failures = [aws_rds_cluster.this]
+}
+
 # Fail closed: no marker at all is production.
 run "unmarked_cluster_refused_without_record" {
   command = plan
