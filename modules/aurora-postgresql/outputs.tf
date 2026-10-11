@@ -69,7 +69,7 @@ output "app_secret_name" {
 }
 
 output "master_user_secret_arn" {
-  description = "RDS-managed admin credential, for DBA work only: the bootstrap, the products-catalog history guard steps and the Aurora 16 drill."
+  description = "RDS-managed admin credential, for DBA work only: the bootstrap and the Aurora 16 drill. The products-catalog history guard steps use the master credential of products' own cluster, not this output."
   value       = aws_rds_cluster.this.master_user_secret[0].secret_arn
 }
 

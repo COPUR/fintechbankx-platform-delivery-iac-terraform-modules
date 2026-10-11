@@ -85,7 +85,7 @@ Examples: [`examples/aurora-postgresql`](../../examples/aurora-postgresql/main.t
 | `secrets_kms_key_arn` | Secrets key (ADR-023) of every Secrets Manager secret of the database; pass it to `operator-db-access` `kms_key_arns` (stack variable `operator_db_import_kms_key_arns`). |
 | `app_secret_arn` | Application credential secret ARN. |
 | `app_secret_name` | Application credential secret name (Helm value externalSecret.remoteSecretName). |
-| `master_user_secret_arn` | RDS-managed admin credential, for DBA work only: the bootstrap, the products-catalog history guard steps and the Aurora 16 drill (see the compensating control under Audit logging). |
+| `master_user_secret_arn` | RDS-managed admin credential, for DBA work only: the bootstrap and the Aurora 16 drill (see the compensating control under Audit logging). The products-catalog history guard steps use the master credential of products' own cluster, not this output. |
 | `pgaudit_bypass_gate_required` | True when the cluster counts as production (no environment marker, or one other than `dev` or `staging`), so `pgaudit_bypass_gate` must hold the gate record. |
 
 ## Tests
@@ -227,7 +227,14 @@ the markers callers already set: tag `Environment`, a `dev-`, `staging-` or `pro
 `_staging` or `_prod` suffix of `database_name`. A cluster is non-production only when it has at least one marker and
 every marker it has is `dev` or `staging`; Terraform refuses to plan every other cluster (no marker, `prod`, or any
 other value) while `pgaudit_bypass_gate` is null (`tests/pgaudit_bypass_gate.tftest.hcl`). A production cluster that
-carries only `dev` or `staging` markers is not caught: the markers are the caller's word.
+carries only `dev` or `staging` markers is not caught: the markers are the caller's word. The record and the refusal act
+only on clusters this module creates. A service that defines its own `aws_rds_cluster` is outside this gate: no input
+records its gate result and nothing refuses its production plan. When this was written no service repository called
+this module; every service with an Aurora cluster defined its own, products-catalog included (the only one that
+preloads pgaudit, and the one with the history guard). The clusters the gate covered were the ones created through
+this module: the platform stack's Grafana database, and the Keycloak database once the `ref=main` its root pins carries
+this input (its prod plan is then refused until that root passes the record). A service cluster is covered once the
+service moves to this module, or once its own cluster carries the same precondition.
 
 - Aurora Database Activity Streams on the cluster: database activity goes to a KMS-encrypted Kinesis stream that no
   database user can switch off (stopping it is the IAM action `rds:StopActivityStream`, which CloudTrail logs). **Not
@@ -265,9 +272,10 @@ carries only `dev` or `staging` markers is not caught: the markers are the calle
   Test set, in a non-production account: the three values above read from a cluster with a started stream, then
   `aws rds stop-activity-stream --resource-arn <non-production cluster ARN> --apply-immediately` raises the alarm.
   Deleting the cluster also stops the stream (deletion protection is on by default).
-- The master credential as break-glass: every use (the DBA bootstrap, the products-catalog history guard steps, this
-  drill) has a change ticket, and every event matched below raises an alarm that is matched to one. Retrieving the
-  secret is not the only way to the credential, so the alarm has two rules.
+- The master credential as break-glass: every use (the DBA bootstrap, this drill) has a change ticket, and every event
+  matched below raises an alarm that is matched to one. Retrieving the secret is not the only way to the credential,
+  so the alarm has two rules. The products-catalog history guard steps use the master credential of products' own
+  cluster, which this gate does not reach (Where the result is recorded, above).
 
   Secret rule. The CloudTrail event of a retrieval is `eventSource` `secretsmanager.amazonaws.com`, `eventName`
   `GetSecretValue`, `requestParameters.secretId` the master secret. `secretId` holds what the caller passed (the
@@ -517,8 +525,9 @@ Checks for the products-catalog history guard, run as the RDS master user on Aur
       and record whether it fails with `permission denied for table pg_trigger` (a superuser disables the trigger
       that way with no log line). The results describe the master user and do not lift the compensating control above
       (Aurora Database Activity Streams, or the master credential as break-glass with the CloudTrail `GetSecretValue`
-      alarm and the rest of its test set, recorded in `pgaudit_bypass_gate`): it is a pre-production gate
-      whatever they show, since these are not the only ways to keep `AUDIT` lines out of the log;
+      alarm and the rest of its test set, recorded in `pgaudit_bypass_gate` for a cluster from this module;
+      products-catalog's own cluster has no such input): it is a pre-production gate whatever they show, since these
+      are not the only ways to keep `AUDIT` lines out of the log;
     - as the service's migration (owner) role, in its own session (logged in with its `db-migration` secret): each
       `SET` above fails with `permission denied to set parameter`, as on a local PostgreSQL 16.15. Then, as the
       master user, list every `SET` grant on any setting that reaches the owner role (a grant to it, to any role it

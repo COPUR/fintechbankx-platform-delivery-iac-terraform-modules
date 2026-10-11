@@ -381,26 +381,29 @@ run "catalog_write_bypass_named" {
   }
 }
 
-# The master credential has three uses (the compensating-control text lists
-# them: the DBA bootstrap, the products-catalog history guard steps and the
-# Aurora 16 drill), so its output must not say "for the DBA bootstrap only".
+# The master credential of a cluster from this module has two uses: the DBA
+# bootstrap and the Aurora 16 drill. The products-catalog history guard steps
+# run on products' own cluster (an inline aws_rds_cluster in its repository,
+# with its own master_user_secret_arn output), not on a cluster from this
+# module, so this output must not list them as one of its uses, and must not
+# say "for the DBA bootstrap only" either (the drill uses it too).
 run "master_secret_output_names_every_use" {
   command = plan
 
   assert {
     condition = alltrue([
-      for needle in ["bootstrap", "history guard", "drill"] :
+      for needle in ["bootstrap", "drill", "own cluster"] :
       strcontains(one(regex("output \"master_user_secret_arn\" \\{\\s*description\\s*=\\s*\"([^\"]*)\"", file("${path.module}/outputs.tf"))), needle)
-    ]) && !strcontains(file("${path.module}/outputs.tf"), "for the DBA bootstrap only")
-    error_message = "outputs.tf master_user_secret_arn: name every use of the master credential (bootstrap, history guard steps, drill), not the DBA bootstrap only."
+    ]) && !strcontains(file("${path.module}/outputs.tf"), "for the DBA bootstrap only") && !strcontains(file("${path.module}/outputs.tf"), "the products-catalog history guard steps and")
+    error_message = "outputs.tf master_user_secret_arn: name the bootstrap and the drill as its uses, and say that the products-catalog history guard steps use products' own cluster, not this output."
   }
 
   assert {
     condition = alltrue([
-      for needle in ["bootstrap", "history guard", "drill"] :
+      for needle in ["bootstrap", "drill", "own cluster"] :
       strcontains(one(regex("\\| `master_user_secret_arn` \\| ([^|\\n]*) \\|", file("${path.module}/README.md"))), needle)
-    ]) && !strcontains(file("${path.module}/README.md"), "for the DBA bootstrap only")
-    error_message = "README outputs table master_user_secret_arn: name every use of the master credential (bootstrap, history guard steps, drill), not the DBA bootstrap only."
+    ]) && !strcontains(file("${path.module}/README.md"), "for the DBA bootstrap only") && !strcontains(file("${path.module}/README.md"), "the products-catalog history guard steps and")
+    error_message = "README outputs table master_user_secret_arn: name the bootstrap and the drill as its uses, and say that the products-catalog history guard steps use products' own cluster, not this output."
   }
 }
 
@@ -589,5 +592,42 @@ run "drill_run_check_is_form_only" {
       strcontains(one(regex("(?s)\nWhere the result is recorded: (.*?)\n\n", file("${path.module}/README.md"))), needle)
     ])
     error_message = "README Where the result is recorded: say that Terraform checks only the form of drill_run (https://TBD refused, a well-formed link or id is not looked up) and that the reviewer of the plan checks the record."
+  }
+}
+
+# The gate record and the plan refusal act only on clusters this module
+# creates. A service that defines its own aws_rds_cluster is outside them:
+# nothing records its gate result and nothing refuses its production plan.
+# When this was written, every service with an Aurora cluster did that and
+# none called this module, products-catalog included, the only one that
+# preloads pgaudit and carries the history guard. The README must say so and
+# must not tie the history guard to this module's master credential or to
+# pgaudit_bypass_gate.
+run "gate_scope_is_clusters_from_this_module" {
+  command = plan
+
+  assert {
+    condition = alltrue([
+      for needle in [
+        "only on clusters this module creates",
+        "defines its own `aws_rds_cluster`",
+        "outside this gate",
+        "nothing refuses its production plan",
+        "products-catalog",
+        "same precondition",
+      ] :
+      strcontains(one(regex("(?s)\nWhere the result is recorded: (.*?)\n\n", file("${path.module}/README.md"))), needle)
+    ])
+    error_message = "README Where the result is recorded: say that the record and the refusal act only on clusters from this module, and that a service cluster defined inline (products-catalog included) is outside the gate until it moves to the module or carries the same precondition."
+  }
+
+  assert {
+    condition     = length(regexall("every use \\([^)]*history guard", file("${path.module}/README.md"))) == 0
+    error_message = "README break-glass: the products-catalog history guard steps run on products' own cluster, not on a cluster from this module; do not list them as a use of this module's master credential."
+  }
+
+  assert {
+    condition     = strcontains(one(regex("(?s)\n10\\. (.*?)\n11\\. ", file("${path.module}/README.md"))), "recorded in `pgaudit_bypass_gate` for a cluster from this module")
+    error_message = "README drill check 10: the gate result is recorded in pgaudit_bypass_gate only for a cluster from this module, not for products' own cluster."
   }
 }
