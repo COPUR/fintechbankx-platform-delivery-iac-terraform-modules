@@ -75,6 +75,7 @@ CI proves only that every module, example and stack validates.
 | [modules/observability-amp](modules/observability-amp/README.md) | Amazon Managed Prometheus and optional Managed Grafana |
 | [modules/operator-access](modules/operator-access/README.md) | In-VPC operator host, SSM Session Manager only (no SSH, no public IP, IMDSv2, encrypted root) |
 | [modules/operator-db-access](modules/operator-db-access/README.md) | Per-service operator roles: read `<env>/<slug>/db-import` only, KMS decrypt via Secrets Manager only |
+| `modules/operator-db-login` | Personal operator logins to one service database through IAM database authentication: per-person `rds-db:connect`, desired-state login SQL for the DBA |
 | [modules/github-oidc](modules/github-oidc/README.md) | GitHub Actions OIDC roles per service (push, deploy, plan, apply) |
 | [stacks/platform](stacks/platform/README.md) | Per-environment composition root (dev, staging, prod) |
 | `services/*` | Legacy open-finance baseline stacks from the monorepo (still validate; use `microservice-base`) |
