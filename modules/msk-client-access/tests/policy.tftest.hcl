@@ -148,8 +148,9 @@ run "exact_aggregate_topic_without_prefix" {
   }
 }
 
-# Consumer: a whole aggregate topic and the consumer's own DLQ (redrive), as
-# a future reader of evt.acc.account.v1 would list it.
+# Consumer: svc-ln-loan-lifecycle's catalog row, an aggregate topic it reads
+# plus its own DLQ (redrive); a future reader of evt.acc.account.v1 lists its
+# rows the same way.
 run "catalog_row_of_a_consumer" {
   command = plan
 
