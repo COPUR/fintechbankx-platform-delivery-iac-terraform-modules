@@ -84,6 +84,25 @@ PDBs, Jobs and CronJobs; read-only Pods, ReplicaSets and Events). That Role and 
 The cicd-templates `helm-deploy.yml` stores Helm releases in ConfigMaps (`HELM_DRIVER=configmap`), so the Role grants
 no Secrets. Never bind the group to `cluster-admin`.
 
+The Role is not a boundary on its own. The same mesh base ships ValidatingAdmissionPolicies
+(`deploy/kustomize/base/generated/workload-admission.yaml`) that refuse privileged containers, host namespaces,
+`hostPath`, `hostPort` and added capabilities (except `istio-init`'s `NET_ADMIN` and `NET_RAW`), Services other than
+ClusterIP or with `externalIPs`, and deploy-group writes to the CA ConfigMaps. In a cluster without them a deploy
+group can run a privileged or `hostPath` pod and is effectively node- and cluster-level: root on the node, its
+kubelet credentials and IAM role, and the Secrets of other namespaces' pods on that node. With them it can still
+mount any Secret and run as any ServiceAccount of its namespace.
+
+The group is per namespace, not per service: the four payments services share `fintechbankx:deploy:payments` and
+the seven open-finance services share `fintechbankx:deploy:open-finance`. Each of those repositories' deploy roles
+can change or delete a sibling service's Deployments, Jobs, HPAs and Helm release ConfigMaps, sync the sibling's
+`<env>/<sibling>/` secrets through an ExternalSecret labelled with its name, and run pods as its ServiceAccount
+(and so its IRSA role). That is accepted for now; isolating sibling services needs a per-service group
+(`fintechbankx:deploy:<namespace>:<service>`) here and per-service Roles and admission in the mesh repository.
+
+The cosign check in `helm-deploy.yml` covers only its image digest input, and only constrains what runs while
+`bind_platform_workflow_ref = true`; until then any job in the service repository's environment can assume the
+deploy role and run `kubectl` or `helm` directly (see "Binding the reusable workflow").
+
 The `tf-apply` roles get only state access by default; pass `apply_policy_arns` (and preferably
 `permissions_boundary_arn`) for what service Terraform creates.
 
