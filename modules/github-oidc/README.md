@@ -77,8 +77,12 @@ Examples: [`examples/github-oidc`](../../examples/github-oidc/main.tf).
 
 Deploy roles enter the cluster as Kubernetes group `fintechbankx:deploy:<namespace>` through an EKS access entry
 without any access policy, so they can do nothing until a `RoleBinding` in that namespace binds the group to a
-namespaced `Role` (Helm release verbs on Deployments, Services, ConfigMaps, ExternalSecrets, HPAs, PDBs, ...). That
-Role and RoleBinding belong to the mesh/Kubernetes platform repository. Never bind the group to `cluster-admin`.
+namespaced `Role` (Helm release verbs on Deployments, Services, ServiceAccounts, ConfigMaps, ExternalSecrets, HPAs,
+PDBs, Jobs and CronJobs; read-only Pods, ReplicaSets and Events). That Role and RoleBinding, both named
+`fintechbankx-deploy`, are generated for every service namespace in the mesh repository
+`fintechbankx-platform-mesh-security-service-mesh`, file `deploy/kustomize/base/generated/deploy-rbac.yaml`.
+The cicd-templates `helm-deploy.yml` stores Helm releases in ConfigMaps (`HELM_DRIVER=configmap`), so the Role grants
+no Secrets. Never bind the group to `cluster-admin`.
 
 The `tf-apply` roles get only state access by default; pass `apply_policy_arns` (and preferably
 `permissions_boundary_arn`) for what service Terraform creates.
