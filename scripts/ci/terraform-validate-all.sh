@@ -6,6 +6,8 @@
 #      (+ terraform test with mock providers where a tests/ directory exists)
 #   3. type-check stacks/*/environments/*.tfvars.example against the stack
 #      variables (terraform console with a temporary local-backend override)
+#      and, where stacks/*/tests/environments exists, run those tests once per
+#      example (terraform test -var-file, mock providers)
 # Usage: scripts/ci/terraform-validate-all.sh   (TERRAFORM=/path/to/terraform)
 set -euo pipefail
 
@@ -59,6 +61,12 @@ for stack in stacks/*; do
     if ! (cd "$stack" && echo 'var.environment' | "$TF" console -no-color -var-file="environments/$(basename "$vars")" >/dev/null); then
       echo "::error::$vars does not match the variables of $stack"
       failures=$((failures + 1))
+    elif [ -d "$stack/tests/environments" ]; then
+      echo "== test $stack/tests/environments with $vars"
+      if ! (cd "$stack" && "$TF" test -no-color -test-directory=tests/environments -var-file="environments/$(basename "$vars")"); then
+        echo "::error::terraform test (tests/environments) failed for $vars"
+        failures=$((failures + 1))
+      fi
     fi
   done
   clean "$stack"

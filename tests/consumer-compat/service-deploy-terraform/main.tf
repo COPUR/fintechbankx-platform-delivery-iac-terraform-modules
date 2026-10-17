@@ -1,7 +1,9 @@
 # Contract fixture: the exact microservice-base call made by the five service
 # repos' deploy/terraform/main.tf (loan-lifecycle, initiation-settlement,
 # profile-kyc, risk-decisioning, compliance-evidence) and the outputs they
-# read. CI validates it so a breaking change to the module fails here first.
+# read. The accounts ledger (neo-fintechbankx-corebanking-accounts-ledger-service)
+# makes the same call and reads cloudwatch_log_group_name. CI validates it so a
+# breaking change to the module fails here first.
 
 terraform {
   required_version = ">= 1.6.0"

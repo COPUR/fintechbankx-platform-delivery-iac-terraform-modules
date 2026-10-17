@@ -126,3 +126,64 @@ run "sub_conditions_per_role_kind" {
     error_message = "No trust condition may contain a wildcard."
   }
 }
+
+# The accounts ledger's repository name carries a neo- prefix and its
+# namespace (corebanking) is new. Both are plain names for the services
+# validation, and every trust subject, deploy group, state key and plan scope
+# uses them verbatim; the slug (image_name) scopes its secrets
+# <env>/accounts-ledger-service/* (db-app, db-migration).
+run "neo_prefixed_repository_in_a_new_namespace" {
+  command = plan
+
+  variables {
+    environment = "prod"
+    services = {
+      "svc-acc-accounts-ledger" = {
+        repository          = "neo-fintechbankx-corebanking-accounts-ledger-service"
+        image_name          = "accounts-ledger-service"
+        namespace           = "corebanking"
+        terraform_state_key = "corebanking/accounts-ledger-service/terraform.tfstate"
+      }
+    }
+  }
+
+  assert {
+    condition     = toset(flatten([for c in one(data.aws_iam_policy_document.trust["svc-acc-accounts-ledger/ecr-push"].statement).condition : tolist(c.values) if endswith(c.variable, ":sub")])) == toset(["repo:COPUR/neo-fintechbankx-corebanking-accounts-ledger-service:ref:refs/heads/main"])
+    error_message = "ecr-push must trust the main branch of the neo- repository, name unchanged."
+  }
+
+  assert {
+    condition     = toset(flatten([for c in one(data.aws_iam_policy_document.trust["svc-acc-accounts-ledger/deploy"].statement).condition : tolist(c.values) if endswith(c.variable, ":sub")])) == toset(["repo:COPUR/neo-fintechbankx-corebanking-accounts-ledger-service:environment:prod"])
+    error_message = "deploy must trust only the prod GitHub environment of the neo- repository."
+  }
+
+  assert {
+    condition     = toset(flatten([for c in one(data.aws_iam_policy_document.trust["svc-acc-accounts-ledger/tf-plan"].statement).condition : tolist(c.values) if endswith(c.variable, ":sub")])) == toset(["repo:COPUR/neo-fintechbankx-corebanking-accounts-ledger-service:pull_request", "repo:COPUR/neo-fintechbankx-corebanking-accounts-ledger-service:ref:refs/heads/main"])
+    error_message = "tf-plan must trust pull requests and main of the neo- repository only."
+  }
+
+  assert {
+    condition     = [for k in ["ecr-push", "deploy", "tf-plan", "tf-apply"] : local.role_names["svc-acc-accounts-ledger/${k}"]] == ["gha-prod-acc-accounts-ledger-ecr-push", "gha-prod-acc-accounts-ledger-deploy", "gha-prod-acc-accounts-ledger-tf-plan", "gha-prod-acc-accounts-ledger-tf-apply"]
+    error_message = "CI role names follow gha-<env>-<service id without svc->-<kind>."
+  }
+
+  assert {
+    condition     = aws_eks_access_entry.deploy["svc-acc-accounts-ledger/deploy"].kubernetes_groups == toset(["fintechbankx:deploy:corebanking"])
+    error_message = "The deploy role maps to the deploy group of the corebanking namespace."
+  }
+
+  assert {
+    condition     = aws_iam_role.this["svc-acc-accounts-ledger/tf-apply"].tags["TerraformStateKey"] == "corebanking/accounts-ledger-service/terraform.tfstate"
+    error_message = "tf-apply carries the ledger's own state key."
+  }
+
+  assert {
+    condition     = toset(one([for st in data.aws_iam_policy_document.ecr_push["svc-acc-accounts-ledger/ecr-push"].statement : st.resources if st.sid == "PushPullOwnRepository"])) == toset(["arn:aws:ecr:me-central-1:111122223333:repository/fintechbankx/accounts-ledger-service"])
+    error_message = "ecr-push may push only fintechbankx/accounts-ledger-service."
+  }
+
+  assert {
+    condition     = contains(tolist(one([for st in data.aws_iam_policy_document.plan_read["svc-acc-accounts-ledger/tf-plan"].statement : st.resources if st.sid == "OwnSecrets"])), "arn:aws:secretsmanager:me-central-1:111122223333:secret:prod/accounts-ledger-service/*")
+    error_message = "The plan role describes the ledger's own secrets under prod/accounts-ledger-service/."
+  }
+}

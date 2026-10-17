@@ -113,6 +113,9 @@ Role names: `gha-<env>-<service id without svc->-<kind>`, at most 59 characters 
 ## Tests
 
 `terraform test` (Terraform >= 1.7, mock AWS provider, `command = plan`, no credentials) in [`tests/`](tests): role names within 64 characters; `sub` per role kind (main, environment, pull request); no wildcard trust; over-long service id rejected; no AWS-managed broad policy on any role and none at all on plan roles; plan-role S3 statements reference only its own key, ListBucket limited by exact prefix, no write actions except its own lock item, KMS decrypt via S3 for its own object only, no other service's resources or secrets, `*` only for Describe/List; state-bucket deny statements, and a plan that fails while the bucket policy lacks them (`verify_terraform_state_bucket_policy`); plan-role `kms:Decrypt` only via Secrets Manager for its own secret ARNs; duplicate state keys and AdministratorAccess in `apply_policy_arns` rejected; deploy role pulls only its own repository (optionally in `ecr_registry_account_id`) and cannot push; with `bind_platform_workflow_ref` each role trusts only its platform workflow at a release tag or SHA, and branch refs are refused.
+Repository and namespace names are taken verbatim: a run with the accounts ledger (repository
+`neo-fintechbankx-corebanking-accounts-ledger-service`, namespace `corebanking`) checks its trust subjects, role
+names, deploy group, state key tag, ECR repository and secrets scope `<env>/accounts-ledger-service/*`.
 Run `terraform init -backend=false && terraform test` in this directory; CI runs it through
 `scripts/ci/terraform-validate-all.sh`.
 

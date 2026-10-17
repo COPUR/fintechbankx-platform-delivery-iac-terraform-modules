@@ -131,8 +131,19 @@ ExternalSecrets with a remote key ending in `/db-import` is a mesh-repository fo
 
 ## Image names
 
-`github_services` in the tfvars examples lists all 15 services. Image name = Kubernetes service account = ECR
+`github_services` in the tfvars examples lists all 16 services. Image name = Kubernetes service account = ECR
 repository `fintechbankx/<image_name>`; the names were confirmed by the owning service threads on 2026-10-08
 (open finance services use `<capability>-service` in namespace `open-finance`, without an `openfinance-` prefix).
+The accounts ledger `svc-acc-accounts-ledger` was added on 2026-10-17 from its repository's chart and
+`deploy/terraform`: repository `neo-fintechbankx-corebanking-accounts-ledger-service` (the `neo-` prefix is part of
+the repository name and appears verbatim in the GitHub OIDC subjects), image `accounts-ledger-service`, namespace
+`corebanking` (deploy group `fintechbankx:deploy:corebanking`), state key
+`corebanking/accounts-ledger-service/terraform.tfstate`. Its secrets live under `<env>/accounts-ledger-service/`
+(`db-app`, `db-migration`), the slug its tf-plan role may describe.
 CI role names are `gha-<env>-<service-id without svc->-<kind>` (at most 59 characters; enforced by a variable
 validation and a `terraform test` in `modules/github-oidc/tests`).
+
+`tests/environments` checks every tfvars example (run once per example by `scripts/ci/terraform-validate-all.sh`
+with `-var-file`, mock providers): the same 16 service ids in every environment, state keys
+`<namespace>/<image_name>/terraform.tfstate`, one ECR repository and one namespaced deploy group per service, and the
+ledger's entry. A service added to one example only fails there; add it to the list in that test as well.

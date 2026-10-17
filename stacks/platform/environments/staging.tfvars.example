@@ -23,7 +23,9 @@ alarm_topic_arn             = "arn:aws:sns:me-central-1:111122223333:fintechbank
 
 # Every service of the platform contract. image_name = Kubernetes service
 # account = ECR repository fintechbankx/<image_name>. All names were
-# confirmed by the owning service threads (2026-10-08).
+# confirmed by the owning service threads (2026-10-08); the accounts ledger
+# was added from its repository's chart and deploy/terraform (2026-10-17).
+# tests/environments checks this map in every example.
 github_services = {
   "svc-ln-loan-lifecycle" = {
     repository          = "fintechbankx-lendingpayments-loan-lifecycle-core"
@@ -114,6 +116,14 @@ github_services = {
     image_name          = "open-products-catalog-service"
     namespace           = "open-finance"
     terraform_state_key = "open-finance/open-products-catalog-service/terraform.tfstate"
+  }
+  # Core banking: the repository name keeps its neo- prefix (GitHub OIDC
+  # subjects use it verbatim); namespace corebanking.
+  "svc-acc-accounts-ledger" = {
+    repository          = "neo-fintechbankx-corebanking-accounts-ledger-service"
+    image_name          = "accounts-ledger-service"
+    namespace           = "corebanking"
+    terraform_state_key = "corebanking/accounts-ledger-service/terraform.tfstate"
   }
 }
 
