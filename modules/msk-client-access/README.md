@@ -39,8 +39,8 @@ Examples: [`examples/msk-client-access`](../../examples/msk-client-access/main.t
 | `policy_name` | `string` | required | IAM policy name, e.g. <env>-<service-slug>-msk. |
 | `cluster_arn` | `string` | required | MSK cluster ARN (msk-cluster output cluster_arn). |
 | `produce_topic_prefixes` | `list(string)` | `[]` | The service's own aggregates as evt.<ctx>.<aggregate>. prefixes (e.g. ["evt.ln.loan."]). |
-| `produce_topics` | `list(string)` | `[]` | Exact topics the service writes, evt.<ctx>.<aggregate>.<event>.v<major> (optional; DLQs are consumer-owned and already covered by produce_topic_prefixes). |
-| `consume_topics` | `list(string)` | `[]` | Topics the service consumes, full names (evt.<ctx>.<aggregate>.<event>.v<major>) or an aggregate prefix ending in .* . |
+| `produce_topics` | `list(string)` | `[]` | Exact topics the service writes: its aggregate topic evt.<ctx>.<aggregate>.v<major> (ADR-019) or a full name evt.<ctx>.<aggregate>.<event>.v<major> such as its own DLQ evt.<ctx>.<aggregate>.dlq.v<major> (optional; produce_topic_prefixes covers both). |
+| `consume_topics` | `list(string)` | `[]` | Topics the service consumes: full names (aggregate topic evt.<ctx>.<aggregate>.v<major> per ADR-019, or evt.<ctx>.<aggregate>.<event>.v<major> such as its own DLQ) or an aggregate prefix ending in .* . |
 | `consumer_groups` | `list(string)` | `[]` | Declared consumer groups cg.<service-id>.<purpose>.v<major>. |
 | `consumer_group_prefixes` | `list(string)` | `[]` | Optional prefix form cg.<service-id>. (covers every group of the service). |
 | `transactional_id_prefixes` | `list(string)` | `[]` | Optional transactional.id prefixes for transactional producers (normally the service id). |
@@ -65,11 +65,19 @@ DLQs are owned by the consuming service (ADR-019, ADR-024 in the event-streaming
 writes only under its own `produce_topic_prefixes`. `produce_topics` stays as an optional input for exact topic
 grants (for example a narrower grant than the prefix); it should not be needed for another context's DLQ.
 
+Topic names follow ADR-019 (one topic per aggregate): `evt.<ctx>.<aggregate>.v<major>`, for example
+`evt.acc.account.v1` of the accounts ledger, and consumer-owned DLQs `evt.<ctx>.<aggregate>.dlq.v<major>`. Both
+forms are accepted in `produce_topics` and `consume_topics`, so a catalog row passes unchanged; wildcards are refused
+there (use `produce_topic_prefixes` or a consumed `evt.<ctx>.<aggregate>.*`).
+
 The policy never grants `CreateTopic`, `AlterTopic` or `DeleteTopic`; the topic provisioning job uses
 `topic_admin_policy_arn` from `msk-cluster`.
 
 ## Tests
 
 `terraform test` (Terraform >= 1.7, mock AWS provider, `command = plan`, no credentials) in [`tests/`](tests): own-prefix and own-group grants only; no topic administration; foreign group prefix, missing group and wildcards rejected.
+Catalog rows pass unchanged: the accounts ledger's (producer only, `evt.acc.account.v1` with and without its prefix)
+and a consumer's (aggregate topic and own DLQ); an aggregate topic without a major version and a wildcard major are
+rejected.
 Run `terraform init -backend=false && terraform test` in this directory; CI runs it through
 `scripts/ci/terraform-validate-all.sh`.

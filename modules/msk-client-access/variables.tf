@@ -36,25 +36,25 @@ variable "produce_topic_prefixes" {
 
 variable "produce_topics" {
   type        = list(string)
-  description = "Exact topics the service writes, evt.<ctx>.<aggregate>.<event>.v<major> (optional; DLQs are consumer-owned and already covered by produce_topic_prefixes)."
+  description = "Exact topics the service writes: its aggregate topic evt.<ctx>.<aggregate>.v<major> (ADR-019) or a full name evt.<ctx>.<aggregate>.<event>.v<major> such as its own DLQ evt.<ctx>.<aggregate>.dlq.v<major> (optional; produce_topic_prefixes covers both)."
   default     = []
 
   validation {
-    condition     = alltrue([for t in var.produce_topics : can(regex("^evt\\.[a-z0-9]+\\.[a-z0-9-]+\\.[a-z0-9-]+\\.v[0-9]+$", t))])
-    error_message = "Each produce topic must be a full name evt.<ctx>.<aggregate>.<event>.v<major> without wildcards."
+    condition     = alltrue([for t in var.produce_topics : can(regex("^evt\\.[a-z0-9]+\\.[a-z0-9-]+\\.([a-z0-9-]+\\.)?v[0-9]+$", t))])
+    error_message = "Each produce topic must be a full name evt.<ctx>.<aggregate>.v<major> or evt.<ctx>.<aggregate>.<event>.v<major> without wildcards."
   }
 }
 
 variable "consume_topics" {
   type        = list(string)
-  description = "Topics the service consumes, full names (evt.<ctx>.<aggregate>.<event>.v<major>) or an aggregate prefix ending in .* ."
+  description = "Topics the service consumes: full names (aggregate topic evt.<ctx>.<aggregate>.v<major> per ADR-019, or evt.<ctx>.<aggregate>.<event>.v<major> such as its own DLQ) or an aggregate prefix ending in .* ."
   default     = []
 
   validation {
     condition = alltrue([for t in var.consume_topics :
-      can(regex("^evt\\.[a-z0-9]+\\.[a-z0-9-]+\\.([a-z0-9-]+\\.v[0-9]+|\\*)$", t))
+      can(regex("^evt\\.[a-z0-9]+\\.[a-z0-9-]+\\.(([a-z0-9-]+\\.)?v[0-9]+|\\*)$", t))
     ])
-    error_message = "Each consumed topic must be evt.<ctx>.<aggregate>.<event>.v<major> or evt.<ctx>.<aggregate>.*"
+    error_message = "Each consumed topic must be evt.<ctx>.<aggregate>.v<major>, evt.<ctx>.<aggregate>.<event>.v<major> or evt.<ctx>.<aggregate>.*"
   }
 }
 
