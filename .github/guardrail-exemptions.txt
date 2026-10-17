@@ -1,0 +1,9 @@
+# Exemptions for the publication guardrails secret scan. One line per exemption:
+# file<TAB>exact line text<TAB>reason. A hit is dropped only when its file and whole line are listed.
+modules/aurora-postgresql/tests/audit_table_convention.tftest.hcl	# as well. This module always sets manage_master_user_password = true, so on	test error message naming the Terraform argument; no credential
+modules/aurora-postgresql/tests/audit_table_convention.tftest.hcl	        "`manage_master_user_password = true`",	test error message naming the Terraform argument; no credential
+modules/aurora-postgresql/README.md	  password as `"masterUserPassword": "****"` (Aurora User Guide, CloudTrail example), so the key is present and an	README quotes the masked CloudTrail field from the Aurora User Guide; no credential
+modules/aurora-postgresql/README.md	        { "eventName": ["ModifyDBCluster"], "requestParameters": { "masterUserPassword": [{ "exists": true }] } },	README EventBridge pattern that matches only the presence of the request field; no credential
+modules/aurora-postgresql/README.md	        { "eventName": ["ModifyDBCluster"], "requestParameters": { "manageMasterUserPassword": [{ "exists": true }] } },	README EventBridge pattern that matches only the presence of the request field; no credential
+modules/aurora-postgresql/README.md	        { "eventName": ["ModifyDBCluster"], "requestParameters": { "rotateMasterUserPassword": [{ "exists": true }] } },	README EventBridge pattern that matches only the presence of the request field; no credential
+modules/aurora-postgresql/README.md	    module, which always sets `manage_master_user_password = true`. AWS documents that	README names the Terraform argument; no credential
