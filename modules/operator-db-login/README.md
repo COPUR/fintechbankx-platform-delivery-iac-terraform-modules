@@ -181,8 +181,10 @@ aws ssm start-session --profile <your profile> --target <operator host instance 
   --parameters host=<writer endpoint>,portNumber=5432,localPortNumber=15432
 
 # Terminal 2: a token for this one psql process, then the connection through the tunnel.
-PGPASSWORD="$(aws rds generate-db-auth-token --profile <your profile> --hostname <writer endpoint> --port 5432 --region <region> --username op_<name>)" \
-  psql "host=<writer endpoint> hostaddr=127.0.0.1 port=15432 dbname=<database_name> user=op_<name> sslmode=verify-full sslrootcert=<rds-ca bundle>"
+DB_TOKEN="$(aws rds generate-db-auth-token --profile <your profile> --hostname <writer endpoint> --port 5432 --region <region> --username op_<name>)"
+export PGPASSWORD="${DB_TOKEN}"
+psql "host=<writer endpoint> hostaddr=127.0.0.1 port=15432 dbname=<database_name> user=op_<name> sslmode=verify-full sslrootcert=<rds-ca bundle>"
+unset PGPASSWORD DB_TOKEN
 ```
 
 Both `aws` commands name your profile, so each terminal signs with your own permission set and never with a
@@ -220,7 +222,7 @@ event and the database's own log.
   change alerts on `userName`.
 - The master user created every login, so PostgreSQL 16 gives it ADMIN on each of them. It can set a password on
   a login, grant itself the login, or take `rds_iam` away, and then connect or act as that person. `login_sql`
-  stops on a login that has a member or lost `rds_iam`. It cannot see a password: for the master `pg_roles` shows
+  stops on a login that has a member or lost `rds_iam`. It cannot read the stored value: for the master `pg_roles` shows
   `********` and `pg_authid` needs a superuser. So every run sets `PASSWORD NULL`, which also removes a password
   without a trace in the catalog. Recommended: an alarm on `ALTER ROLE op_*`, and on `GRANT` or `REVOKE` that
   names an `op_` login, by the master outside a `login_sql` run (the cluster's pgaudit `role` class logs them).
