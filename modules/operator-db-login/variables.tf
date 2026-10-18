@@ -50,20 +50,20 @@ variable "operator_group_role" {
 
 variable "operators" {
   type        = map(string)
-  description = "IAM Identity Center user name (the session name of their permission-set role) => their own database login (op_<name>). One login per person; removing a person here removes their connect permission and, on the next run of the login SQL, their login."
+  description = "IAM Identity Center user name (the session name of their permission-set role) => their own database login (op_<name>). One login per person, for good: the login SQL marks each login with the user name and stops when a login is listed for another person or was retired. Removing a person here removes their connect permission and, on the next run of the login SQL, retires their login. The connect policy must stay within 6,144 characters (about 20 operators with e-mail user names)."
 
   validation {
     condition = length(var.operators) > 0 && length(var.operators) <= 20 && alltrue([
       for user, login in var.operators :
       can(regex("^[A-Za-z0-9+=,.@_-]{2,64}$", user)) && can(regex("^op_[a-z][a-z0-9_]{1,59}$", login))
     ]) && length(distinct(values(var.operators))) == length(var.operators)
-    error_message = "operators must map 1 to 20 Identity Center user names (2-64 characters of A-Z a-z 0-9 + = , . @ _ -, so no * or ?) to distinct logins op_<lowercase name>."
+    error_message = "operators must map 1 to 20 Identity Center user names (2-64 characters of A-Z a-z 0-9 + = , . @ _ -, so no * ? $ { or }, which IAM reads as wildcards or policy variables) to distinct logins op_<lowercase name>."
   }
 }
 
 variable "reserved_db_users" {
   type        = list(string)
-  description = "The service's own database users (master, runtime and migration users). None of them may be the group or an operator login, and the login SQL takes them out of the group if they were ever put in."
+  description = "The service's own database users (master, runtime and migration users). None of them may be the group or an operator login; the login SQL stops when one is a member of the group, and leaves the membership in place for the DBA to look at."
 
   validation {
     condition     = length(var.reserved_db_users) > 0 && alltrue([for u in var.reserved_db_users : can(regex("^[a-z][a-z0-9_]{0,62}$", u))])
@@ -95,7 +95,7 @@ variable "idle_in_transaction_timeout_seconds" {
 
 variable "read_only" {
   type        = bool
-  description = "Logins that may only read, such as a pre-cutover check: each login defaults every transaction to read only, and the login SQL stops when the group can change anything in the database (a write, CREATE or ownership the service's migration gave it, or EXECUTE on a SECURITY DEFINER function). The policy is named <env>-<slug>-db-readonly-login instead of -db-operator-login."
+  description = "Logins that may only read, such as a pre-cutover check: each login defaults every transaction to read only, and the login SQL takes LOGIN away first and gives it back only when no login can change anything in the database (its own, the group's, rds_iam's and PUBLIC's privileges, default privileges, large objects, ownership, SECURITY DEFINER functions). The policy is named <env>-<slug>-db-readonly-login instead of -db-operator-login."
   default     = false
 }
 

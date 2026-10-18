@@ -155,9 +155,15 @@ resource "aws_rds_cluster_parameter_group" "this" {
   }
 
   # Every connection is logged with its user and database, so a personal
-  # operator login (operator-db-login) is named in the postgresql log export.
+  # operator login (operator-db-login) is named in the postgresql log export,
+  # and so is the end of each session with its duration.
   parameter {
     name  = "log_connections"
+    value = "1"
+  }
+
+  parameter {
+    name  = "log_disconnections"
     value = "1"
   }
 

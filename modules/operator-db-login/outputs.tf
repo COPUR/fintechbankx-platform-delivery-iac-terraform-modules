@@ -19,13 +19,15 @@ output "operator_group_role" {
 }
 
 output "login_sql" {
-  description = "Desired-state SQL for the DBA: run as the cluster's master user in database_name with psql -v ON_ERROR_STOP=1 --single-transaction -f. Holds no secret."
+  description = "Desired-state SQL for the DBA: run as the cluster's master user in database_name with psql -v ON_ERROR_STOP=1 -f (the file holds its own BEGIN and COMMIT; no --single-transaction). Holds no secret."
   value = templatefile("${path.module}/login.sql.tftpl", {
     environment      = var.environment
     service_slug     = var.service_slug
     database_name    = var.database_name
     group            = var.operator_group_role
+    group_mark       = local.group_mark
     logins           = local.sql_list
+    users            = local.sql_users
     reserved         = join(", ", [for u in sort(var.reserved_db_users) : "'${u}'"])
     connection_limit = var.connection_limit
     idle_tx_seconds  = var.idle_in_transaction_timeout_seconds
