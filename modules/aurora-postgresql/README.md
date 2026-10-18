@@ -453,6 +453,16 @@ roles: the owner role owns `sc_<ctx>_<cap>` and runs Flyway; the runtime role ge
 sequences) that Flyway creates: no DDL, no `TRUNCATE`, no ownership. The SQL carries no password; the DBA sets each
 one with `\password` from its secret. `tests/role_bootstrap.tftest.hcl` pins these grants.
 
+The runtime role cannot create temporary tables. A temporary table is found before any schema for a table name that
+is not schema-qualified, even inside a `SECURITY DEFINER` function with a fixed `search_path` (PostgreSQL searches
+`pg_temp` first unless the path names it). So a runtime role with `TEMPORARY` could create, for example, a temporary
+`consents` table and make a trigger that looks up `consents` read its rows instead of the service's table.
+`REVOKE ALL ON DATABASE ... FROM PUBLIC` takes away the `TEMPORARY` that every role gets through `PUBLIC` by default;
+the bootstrap also revokes `TEMPORARY` from the runtime role by name, and its last statement stops the bootstrap when
+`has_database_privilege(<runtime role>, <database>, 'TEMPORARY')` is still true (through `PUBLIC`, a role it belongs
+to, or ownership). Run the file with `psql -v ON_ERROR_STOP=1 --single-transaction -f` so that a stop leaves nothing
+behind. The migration role gets `CONNECT` only, so it has no `TEMPORARY` either; the check covers the runtime role.
+
 On PostgreSQL 16 the RDS admin is a `CREATEROLE` member of `rds_superuser`, not a superuser, and a role it creates is
 granted back to it with `ADMIN` only (no `SET`, no `INHERIT`). The SQL therefore runs
 `GRANT <owner> TO CURRENT_USER WITH SET TRUE, INHERIT FALSE`, `CREATE SCHEMA ... AUTHORIZATION <owner>`,
@@ -477,7 +487,8 @@ Run before the first service bootstrap on a new engine major, and after any chan
 
 Offline, on a local PostgreSQL 16 (what the review of PR #11 used): start a throwaway cluster, create an admin
 `LOGIN CREATEROLE CREATEDB NOSUPERUSER` that owns the service database (as on RDS), render the SQL with
-`terraform console` (`local.role_bootstrap_sql`) and run it as that admin with `psql -v ON_ERROR_STOP=1`. Leave out
+`terraform console` (`local.role_bootstrap_sql`) and run it as that admin with
+`psql -v ON_ERROR_STOP=1 --single-transaction`. Leave out
 the `CREATE EXTENSION pgaudit` line if the local server has no pgaudit. Expected:
 
 1. the bootstrap completes; the schema owner is the migration role;
@@ -491,7 +502,10 @@ the `CREATE EXTENSION pgaudit` line if the local server has no pgaudit. Expected
    table with the trigger on the parent only, `TRUNCATE <partition>` by the owner succeeds and the
    unguarded-children query above (`pg_inherits`) lists the partition; after the convention is applied to each
    partition, `TRUNCATE <partition>` is refused and the query returns no rows;
-5. re-running the `rds_pgaudit` `DO` block succeeds.
+5. re-running the `rds_pgaudit` `DO` block succeeds;
+6. as the runtime role, `CREATE TEMP TABLE` fails with `permission denied to create temporary tables in database`, and
+   a copy of the SQL without the `REVOKE ALL ON DATABASE ... FROM PUBLIC` line stops at the `TEMPORARY` check and
+   leaves no role behind.
 
 Two more checks, run as the RDS master user, for services whose migrations need them:
 

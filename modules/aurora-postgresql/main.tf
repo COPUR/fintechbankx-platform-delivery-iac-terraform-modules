@@ -45,12 +45,18 @@ locals {
   owner_self_grant = tonumber(local.engine_major) >= 16 ? " WITH SET TRUE, INHERIT FALSE" : ""
   roles_named      = var.schema_name != null && var.app_role_name != null && var.migration_role_name != null
   role_bootstrap_sql = local.roles_named ? join("\n", concat([
-    "-- Two-role bootstrap for ${var.database_name} (run once as the RDS admin, in ${var.database_name}; set each password with \\password from its secret).",
+    "-- Two-role bootstrap for ${var.database_name} (run once as the RDS admin, in ${var.database_name}, with psql -v ON_ERROR_STOP=1 --single-transaction; set each password with \\password from its secret).",
     "CREATE ROLE ${var.migration_role_name} LOGIN;",
     "CREATE ROLE ${var.app_role_name} LOGIN;",
     "REVOKE ALL ON DATABASE ${var.database_name} FROM PUBLIC;",
     "REVOKE CREATE ON SCHEMA public FROM PUBLIC;",
     "GRANT CONNECT ON DATABASE ${var.database_name} TO ${var.migration_role_name}, ${var.app_role_name};",
+    # No temporary tables for the runtime role: a TEMP table named like a
+    # service table is found first by an unqualified name in a trigger or
+    # function the runtime role fires. REVOKE ALL above already took PUBLIC's
+    # TEMPORARY; this names the runtime role too, and the check at the end
+    # stops when it still has TEMPORARY by any route.
+    "REVOKE TEMPORARY ON DATABASE ${var.database_name} FROM ${var.app_role_name};",
     "-- PostgreSQL 16: act as the owner only for the schema grants, then drop the membership.",
     "GRANT ${var.migration_role_name} TO CURRENT_USER${local.owner_self_grant};",
     "CREATE SCHEMA IF NOT EXISTS ${var.schema_name} AUTHORIZATION ${var.migration_role_name};",
@@ -60,6 +66,7 @@ locals {
     "ALTER DEFAULT PRIVILEGES FOR ROLE ${var.migration_role_name} IN SCHEMA ${var.schema_name} GRANT USAGE, SELECT ON SEQUENCES TO ${var.app_role_name};",
     "RESET ROLE;",
     "REVOKE ${var.migration_role_name} FROM CURRENT_USER;",
+    "DO $$ BEGIN IF has_database_privilege('${var.app_role_name}', '${var.database_name}', 'TEMPORARY') THEN RAISE EXCEPTION 'runtime role ${var.app_role_name} can create temporary tables in ${var.database_name} (through PUBLIC, a role it belongs to, or ownership); a temporary table can shadow a table an unqualified name in a trigger or function refers to. Revoke TEMPORARY from that route and run the bootstrap again.'; END IF; END $$;",
     ], var.pgaudit_enabled ? [
     "CREATE EXTENSION IF NOT EXISTS pgaudit;",
     # Object audit role (pgaudit.role): SELECT/INSERT/UPDATE/DELETE on objects

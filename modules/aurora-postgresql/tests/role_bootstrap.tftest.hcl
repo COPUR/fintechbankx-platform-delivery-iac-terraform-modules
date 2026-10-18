@@ -143,3 +143,34 @@ run "bootstrap_grants_nothing_on_tables" {
     error_message = "role_bootstrap_sql must not GRANT on tables or to rds_pgaudit; object-audit grants come from service migrations."
   }
 }
+
+# The runtime role cannot create temporary tables (coordinator hand-off
+# 2026-10-18): a TEMP table named like a service table is found first by an
+# unqualified name in a trigger or function the runtime role fires, so it can
+# shadow the real table. REVOKE ALL ON DATABASE ... FROM PUBLIC already takes
+# PUBLIC's TEMPORARY; the bootstrap also revokes it from the runtime role by
+# name and stops when the runtime role still has it by any route (PUBLIC, a
+# membership, ownership).
+run "runtime_role_has_no_temporary_privilege" {
+  command = apply
+
+  assert {
+    condition     = length(regexall("(?s)REVOKE ALL ON DATABASE db_pay_request_to_pay_dev FROM PUBLIC;.*GRANT CONNECT ON DATABASE db_pay_request_to_pay_dev TO payment_request_to_pay_migration, payment_request_to_pay_app;\nREVOKE TEMPORARY ON DATABASE db_pay_request_to_pay_dev FROM payment_request_to_pay_app;\n", output.role_bootstrap_sql)) == 1
+    error_message = "After GRANT CONNECT the bootstrap revokes TEMPORARY on the database from the runtime role by name."
+  }
+
+  assert {
+    condition     = strcontains(output.role_bootstrap_sql, "DO $$ BEGIN IF has_database_privilege('payment_request_to_pay_app', 'db_pay_request_to_pay_dev', 'TEMPORARY') THEN RAISE EXCEPTION 'runtime role payment_request_to_pay_app can create temporary tables in db_pay_request_to_pay_dev (through PUBLIC, a role it belongs to, or ownership); a temporary table can shadow a table an unqualified name in a trigger or function refers to. Revoke TEMPORARY from that route and run the bootstrap again.'; END IF; END $$;")
+    error_message = "The bootstrap stops when the runtime role still has TEMPORARY on the database by any route."
+  }
+
+  assert {
+    condition     = length(regexall("(?s)REVOKE payment_request_to_pay_migration FROM CURRENT_USER;.*has_database_privilege\\('payment_request_to_pay_app', 'db_pay_request_to_pay_dev', 'TEMPORARY'\\)", output.role_bootstrap_sql)) == 1
+    error_message = "The TEMPORARY check runs after every grant of the bootstrap."
+  }
+
+  assert {
+    condition     = length(regexall("(?i)GRANT[^;]*(TEMP|ALL)[^;]*ON DATABASE[^;]*TO[^;]*payment_request_to_pay_app", output.role_bootstrap_sql)) == 0
+    error_message = "The bootstrap never grants TEMPORARY (or ALL) on the database to the runtime role."
+  }
+}
