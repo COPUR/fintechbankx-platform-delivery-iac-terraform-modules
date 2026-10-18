@@ -94,6 +94,19 @@ locals {
   # elasticache-redis and microservice-base name their resources).
   service_prefix = { for id, s in var.services : id => coalesce(s.resource_name_prefix, "${var.environment}-${s.image_name}") }
 
+  # The service's secrets whose value Terraform writes (and so already holds in
+  # state): microservice-base runtime (<env>/<slug>/runtime, or the legacy
+  # <prefix>/runtime through runtime_secret_name), elasticache-redis auth and
+  # documentdb-cluster master. -?????? is the suffix Secrets Manager appends.
+  # Operator-filled secrets (db-app, db-migration, docdb-app, oidc-client) are
+  # not among them.
+  terraform_written_secret_arns = { for id, s in var.services : id => [
+    "arn:${local.partition}:secretsmanager:${local.region}:${local.account_id}:secret:${var.environment}/${s.image_name}/runtime-??????",
+    "arn:${local.partition}:secretsmanager:${local.region}:${local.account_id}:secret:${local.service_prefix[id]}/runtime-??????",
+    "arn:${local.partition}:secretsmanager:${local.region}:${local.account_id}:secret:${var.environment}/${s.image_name}/redis-??????",
+    "arn:${local.partition}:secretsmanager:${local.region}:${local.account_id}:secret:${local.service_prefix[id]}/docdb-master-??????",
+  ] }
+
   ci_terraform_role_arn_patterns = [
     "arn:${local.partition}:iam::${local.account_id}:role/gha-${var.environment}-*-tf-plan",
     "arn:${local.partition}:iam::${local.account_id}:role/gha-${var.environment}-*-tf-apply",
@@ -409,17 +422,15 @@ data "aws_iam_policy_document" "plan_read" {
     ]
   }
 
-  # Refreshing aws_secretsmanager_secret_version reads the value. Only secrets
-  # whose value Terraform itself wrote (and so already holds in state) carry
-  # fintechbankx.io/value-in-state=true. Operator-filled secrets (db-app,
-  # db-migration, oidc-client) are never readable from a pull request.
+  # Refreshing aws_secretsmanager_secret_version reads the value. Only the
+  # secrets whose value Terraform itself wrote (and so already holds in state),
+  # by name, and only while they carry fintechbankx.io/value-in-state=true.
+  # Operator-filled secrets (db-app, db-migration, docdb-app, oidc-client) are
+  # never readable from a pull request.
   statement {
-    sid     = "OwnTerraformWrittenSecretValues"
-    actions = ["secretsmanager:GetSecretValue"]
-    resources = [
-      "arn:${local.partition}:secretsmanager:${local.region}:${local.account_id}:secret:${var.environment}/${var.services[each.value.id].image_name}/*",
-      "arn:${local.partition}:secretsmanager:${local.region}:${local.account_id}:secret:${local.service_prefix[each.value.id]}/*",
-    ]
+    sid       = "OwnTerraformWrittenSecretValues"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = local.terraform_written_secret_arns[each.value.id]
     condition {
       test     = "StringEquals"
       variable = "secretsmanager:ResourceTag/fintechbankx.io/value-in-state"
@@ -429,9 +440,9 @@ data "aws_iam_policy_document" "plan_read" {
 
   # GetSecretValue on a secret encrypted with a customer managed key
   # (documentdb-cluster, elasticache-redis, microservice-base kms_key_arn)
-  # also needs kms:Decrypt. Only through Secrets Manager and only with the
-  # service's own secret ARN in the encryption context, so this grants nothing
-  # beyond the tag-scoped GetSecretValue above. Not every service key has an
+  # also needs kms:Decrypt. Only through Secrets Manager and only with one of
+  # those Terraform-written secret ARNs in the encryption context, so this
+  # grants nothing beyond the GetSecretValue above. Not every service key has an
   # alias (elasticache-redis creates none; microservice-base takes the
   # caller's key), so no kms:ResourceAliases condition.
   statement {
@@ -446,10 +457,7 @@ data "aws_iam_policy_document" "plan_read" {
     condition {
       test     = "StringLike"
       variable = "kms:EncryptionContext:SecretARN"
-      values = [
-        "arn:${local.partition}:secretsmanager:${local.region}:${local.account_id}:secret:${var.environment}/${var.services[each.value.id].image_name}/*",
-        "arn:${local.partition}:secretsmanager:${local.region}:${local.account_id}:secret:${local.service_prefix[each.value.id]}/*",
-      ]
+      values   = local.terraform_written_secret_arns[each.value.id]
     }
   }
 

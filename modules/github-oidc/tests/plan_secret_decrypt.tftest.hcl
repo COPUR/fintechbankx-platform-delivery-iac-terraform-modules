@@ -52,12 +52,37 @@ run "plan_role_decrypts_only_its_own_secrets_via_secrets_manager" {
       toset(st.resources) == toset(["arn:aws:kms:me-central-1:111122223333:key/*"]) &&
       length([for c in st.condition : c if c.test == "StringEquals" && c.variable == "kms:ViaService" && toset(c.values) == toset(["secretsmanager.me-central-1.amazonaws.com"])]) == 1 &&
       length([for c in st.condition : c if c.test == "StringLike" && c.variable == "kms:EncryptionContext:SecretARN" && toset(c.values) == toset([
-        "arn:aws:secretsmanager:me-central-1:111122223333:secret:staging/loan-lifecycle-service/*",
-        "arn:aws:secretsmanager:me-central-1:111122223333:secret:staging-loan-lifecycle-service/*",
+        "arn:aws:secretsmanager:me-central-1:111122223333:secret:staging/loan-lifecycle-service/runtime-??????",
+        "arn:aws:secretsmanager:me-central-1:111122223333:secret:staging-loan-lifecycle-service/runtime-??????",
+        "arn:aws:secretsmanager:me-central-1:111122223333:secret:staging/loan-lifecycle-service/redis-??????",
+        "arn:aws:secretsmanager:me-central-1:111122223333:secret:staging-loan-lifecycle-service/docdb-master-??????",
       ])]) == 1 &&
       length(st.condition) == 2
       if contains(st.actions, "kms:Decrypt")
     ])
-    error_message = "kms:Decrypt must be limited to Secrets Manager (kms:ViaService) and the service's own secret ARNs (kms:EncryptionContext:SecretARN)."
+    error_message = "kms:Decrypt must be limited to Secrets Manager (kms:ViaService) and the ARNs of the service's Terraform-written secrets (kms:EncryptionContext:SecretARN)."
+  }
+}
+
+# The plan role reads (and decrypts) only the secrets whose value Terraform
+# writes: microservice-base runtime (also under its legacy <prefix>/runtime
+# name), elasticache-redis auth and documentdb-cluster master. A secret an
+# operator fills under the same prefix (db-app, db-migration, docdb-app,
+# oidc-client) is outside the names even if its tag were set to true.
+run "plan_role_reads_only_terraform_written_secret_names" {
+  command = plan
+
+  assert {
+    condition = alltrue([
+      for st in data.aws_iam_policy_document.plan_read["svc-ln-loan-lifecycle/tf-plan"].statement :
+      toset(st.resources) == toset([
+        "arn:aws:secretsmanager:me-central-1:111122223333:secret:staging/loan-lifecycle-service/runtime-??????",
+        "arn:aws:secretsmanager:me-central-1:111122223333:secret:staging-loan-lifecycle-service/runtime-??????",
+        "arn:aws:secretsmanager:me-central-1:111122223333:secret:staging/loan-lifecycle-service/redis-??????",
+        "arn:aws:secretsmanager:me-central-1:111122223333:secret:staging-loan-lifecycle-service/docdb-master-??????",
+      ])
+      if contains(st.actions, "secretsmanager:GetSecretValue")
+    ])
+    error_message = "GetSecretValue on the plan role must name only the Terraform-written secrets (runtime, redis, docdb-master)."
   }
 }
