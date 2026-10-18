@@ -147,6 +147,13 @@ resource "aws_rds_cluster_parameter_group" "this" {
     value = tostring(var.log_min_duration_statement_ms)
   }
 
+  # Every connection is logged with its user and database, so a personal
+  # operator login (operator-db-login) is named in the postgresql log export.
+  parameter {
+    name  = "log_connections"
+    value = "1"
+  }
+
   # pgaudit: DDL and role/grant changes are audit evidence (schema changes by
   # the migration role, grants to the runtime role). shared_preload_libraries
   # is static: on an existing cluster it takes effect after a reboot. Setting

@@ -78,7 +78,8 @@ operator host (`operator-access` output `operator_security_group_id`).
 ## Residual risk
 
 - `rds-db:connect` is authorised when the connection is made and is not recorded in CloudTrail; the database's
-  own log (pgaudit, connection logging) is the record and names the login.
+  own log (pgaudit, connection logging) is the record and names the login. `aurora-postgresql` sets
+  `log_connections = 1`; a service that keeps its own parameter group (loan, ledger) must set it too.
 - The binding to the person relies on the policy being attached only to the Identity Center permission set. A
   role whose callers choose their own session name must never get it.
 - Anyone with the master user (or the schema owner) can still act in the database under that shared name; their

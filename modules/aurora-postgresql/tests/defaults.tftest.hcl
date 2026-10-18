@@ -35,6 +35,11 @@ run "secure_defaults" {
   }
 
   assert {
+    condition     = one([for p in aws_rds_cluster_parameter_group.this.parameter : p.value if p.name == "log_connections"]) == "1"
+    error_message = "log_connections must be 1: the PostgreSQL log names every login that connects (personal operator logins included)."
+  }
+
+  assert {
     condition     = aws_rds_cluster.this.storage_encrypted == true
     error_message = "Storage must be encrypted."
   }
