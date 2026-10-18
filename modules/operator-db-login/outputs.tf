@@ -28,5 +28,6 @@ output "login_sql" {
     logins           = local.sql_list
     reserved         = join(", ", [for u in sort(var.reserved_db_users) : "'${u}'"])
     connection_limit = var.connection_limit
+    idle_tx_seconds  = var.idle_in_transaction_timeout_seconds
   })
 }

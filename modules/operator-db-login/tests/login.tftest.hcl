@@ -84,6 +84,11 @@ run "login_sql_desired_state" {
   }
 
   assert {
+    condition     = strcontains(output.login_sql, "idle_tx    constant text   := '60s';") && strcontains(output.login_sql, "SET idle_in_transaction_session_timeout = %L")
+    error_message = "Each login gets idle_in_transaction_session_timeout (default 60 s), so an idle operator transaction cannot hold the relay's rows."
+  }
+
+  assert {
     condition     = jsonencode(output.operator_logins) == jsonencode({ "jane.doe@bank.example" = "op_jane_doe", "omar.k@bank.example" = "op_omar_k" })
     error_message = "operator_logins echoes the map."
   }
@@ -180,4 +185,24 @@ run "cluster_resource_id_not_identifier" {
   }
 
   expect_failures = [var.cluster_resource_id]
+}
+
+run "idle_in_transaction_timeout_bounded" {
+  command = plan
+
+  variables {
+    idle_in_transaction_timeout_seconds = 0
+  }
+
+  expect_failures = [var.idle_in_transaction_timeout_seconds]
+}
+
+run "idle_in_transaction_timeout_whole_seconds" {
+  command = plan
+
+  variables {
+    idle_in_transaction_timeout_seconds = 1.5
+  }
+
+  expect_failures = [var.idle_in_transaction_timeout_seconds]
 }

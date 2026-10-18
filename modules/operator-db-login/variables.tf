@@ -82,6 +82,17 @@ variable "connection_limit" {
   }
 }
 
+variable "idle_in_transaction_timeout_seconds" {
+  type        = number
+  description = "idle_in_transaction_session_timeout of each operator login, in seconds: a session left idle inside a transaction is ended, so it cannot hold row locks the service's own jobs (the outbox relay's discard step) wait for."
+  default     = 60
+
+  validation {
+    condition     = var.idle_in_transaction_timeout_seconds >= 5 && var.idle_in_transaction_timeout_seconds <= 600 && floor(var.idle_in_transaction_timeout_seconds) == var.idle_in_transaction_timeout_seconds
+    error_message = "idle_in_transaction_timeout_seconds must be a whole number from 5 to 600."
+  }
+}
+
 variable "tags" {
   type        = map(string)
   description = "Resource tags."

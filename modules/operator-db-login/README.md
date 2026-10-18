@@ -16,7 +16,9 @@ example the accounts ledger's outbox discard audit) name the person, not a share
   policy to the operators' permission set as a customer managed policy reference (name, path `/`).
 - Database side: the output `login_sql`, the desired state for the DBA to run as the cluster's master user. It
   keeps the NOLOGIN group `operator_group_role` and one LOGIN role per operator (`op_<name>`, member of the group
-  and of `rds_iam`, no password, no role attributes, no other membership, owns nothing, nobody inherits it). A
+  and of `rds_iam`, no password, no role attributes, no other membership, owns nothing, nobody inherits it, and
+  `idle_in_transaction_session_timeout` set, so a transaction left open at the prompt ends instead of holding rows
+  the service's own jobs wait for, such as the outbox relay's discard step). A
   member of the group that is no longer listed is taken out; an `op_` login that is no longer listed also loses
   LOGIN. Roles are kept, not dropped, so names in audit rows keep pointing at the same person. The service's own
   users (`reserved_db_users`) can never be the group or a login, and the SQL stops instead of continuing when it
@@ -59,6 +61,9 @@ operator host (`operator-access` output `operator_security_group_id`).
   role whose callers choose their own session name must never get it.
 - Anyone with the master user (or the schema owner) can still act in the database under that shared name; their
   use is for the DBA process, not for operator tasks.
+- `idle_in_transaction_session_timeout` is a session default: an operator can change it with `SET` in their own
+  session. It stops a transaction forgotten at the prompt, not one an operator keeps open on purpose; the
+  database's log shows such a session, and `pg_terminate_backend` by the DBA ends it.
 
 ## Inputs
 
@@ -72,6 +77,7 @@ operator host (`operator-access` output `operator_security_group_id`).
 | `operators` | `map(string)` | required | Identity Center user name => login `op_<name>`; 1 to 20, one login per person, no `*` or `?`. |
 | `reserved_db_users` | `list(string)` | required | The service's master, runtime and migration users. |
 | `connection_limit` | `number` | `2` | Sessions per login, 1..10. |
+| `idle_in_transaction_timeout_seconds` | `number` | `60` | `idle_in_transaction_session_timeout` of each login, 5..600 s. |
 | `tags` | `map(string)` | `{}` | Tags. |
 
 ## Outputs

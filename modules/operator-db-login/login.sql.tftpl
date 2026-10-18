@@ -7,7 +7,10 @@
 --   migration grants it what operators may do. It gets CONNECT on ${database_name} here.
 -- - One LOGIN role per listed operator: member of ${group} (INHERIT, no SET ROLE) and
 --   rds_iam, so IAM database authentication is its only way in; no password, no attributes,
---   no other memberships, owns nothing, nobody else inherits it.
+--   no other memberships, owns nothing, nobody else inherits it. Its sessions default to
+--   idle_in_transaction_session_timeout ${idle_tx_seconds}s, so a transaction left open at the
+--   prompt ends instead of holding rows the service's jobs wait for (an operator can still
+--   change the setting inside their own session).
 -- - Any other member of ${group} is taken out of it; an operator login (op_*) that is no
 --   longer listed also loses LOGIN and rds_iam. Roles are kept, not dropped, so names in
 --   audit rows keep pointing at the same person.
@@ -21,6 +24,7 @@ DECLARE
     ops        constant text[] := ARRAY[${logins}];
     reserved   constant text[] := ARRAY[${reserved}];
     conn_limit constant int    := ${connection_limit};
+    idle_tx    constant text   := '${idle_tx_seconds}s';
     op   text;
     bad  text;
 BEGIN
@@ -111,6 +115,7 @@ BEGIN
                     AND (rolsuper OR rolcreaterole OR rolcreatedb OR rolreplication OR rolbypassrls)) THEN
             RAISE EXCEPTION 'role % has role attributes (superuser, createrole, createdb, replication or bypassrls)', op;
         END IF;
+        EXECUTE format('ALTER ROLE %I SET idle_in_transaction_session_timeout = %L', op, idle_tx);
         EXECUTE format('GRANT rds_iam TO %I', op);
         EXECUTE format('GRANT %I TO %I WITH INHERIT TRUE, SET FALSE', grp, op);
     END LOOP;
