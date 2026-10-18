@@ -149,8 +149,9 @@ run "bootstrap_grants_nothing_on_tables" {
 # unqualified name in a trigger or function the runtime role fires, so it can
 # shadow the real table. REVOKE ALL ON DATABASE ... FROM PUBLIC already takes
 # PUBLIC's TEMPORARY; the bootstrap also revokes it from the runtime role by
-# name and stops when the runtime role still has it by any route (PUBLIC, a
-# membership, ownership).
+# name and, as its last statement, stops when the runtime role or any role it
+# is a member of has it (PUBLIC, ownership, an inherited or SET-only
+# membership: has_database_privilege alone misses SET-only memberships).
 run "runtime_role_has_no_temporary_privilege" {
   command = apply
 
@@ -160,13 +161,13 @@ run "runtime_role_has_no_temporary_privilege" {
   }
 
   assert {
-    condition     = strcontains(output.role_bootstrap_sql, "DO $$ BEGIN IF has_database_privilege('payment_request_to_pay_app', 'db_pay_request_to_pay_dev', 'TEMPORARY') THEN RAISE EXCEPTION 'runtime role payment_request_to_pay_app can create temporary tables in db_pay_request_to_pay_dev (through PUBLIC, a role it belongs to, or ownership); a temporary table can shadow a table an unqualified name in a trigger or function refers to. Revoke TEMPORARY from that route and run the bootstrap again.'; END IF; END $$;")
-    error_message = "The bootstrap stops when the runtime role still has TEMPORARY on the database by any route."
+    condition     = strcontains(output.role_bootstrap_sql, "DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role('payment_request_to_pay_app', r.oid, 'MEMBER') AND has_database_privilege(r.oid, 'db_pay_request_to_pay_dev', 'TEMPORARY')) THEN RAISE EXCEPTION 'runtime role payment_request_to_pay_app can create temporary tables in db_pay_request_to_pay_dev (through PUBLIC, ownership, or a role it is a member of, with or without INHERIT or SET); a temporary table can shadow a table an unqualified name in a trigger or function refers to. Revoke TEMPORARY from that route and run the bootstrap again.'; END IF; END $$;")
+    error_message = "The bootstrap stops when the runtime role, or any role it is a member of (inherited or SET-only), has TEMPORARY on the database."
   }
 
   assert {
-    condition     = length(regexall("(?s)REVOKE payment_request_to_pay_migration FROM CURRENT_USER;.*has_database_privilege\\('payment_request_to_pay_app', 'db_pay_request_to_pay_dev', 'TEMPORARY'\\)", output.role_bootstrap_sql)) == 1
-    error_message = "The TEMPORARY check runs after every grant of the bootstrap."
+    condition     = endswith(trimspace(output.role_bootstrap_sql), "Revoke TEMPORARY from that route and run the bootstrap again.'; END IF; END $$;")
+    error_message = "The TEMPORARY check is the last statement of the bootstrap, after every grant and the pgaudit block."
   }
 
   assert {

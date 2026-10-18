@@ -54,7 +54,7 @@ locals {
     # No temporary tables for the runtime role: a TEMP table named like a
     # service table is found first by an unqualified name in a trigger or
     # function the runtime role fires. REVOKE ALL above already took PUBLIC's
-    # TEMPORARY; this names the runtime role too, and the check at the end
+    # TEMPORARY; this names the runtime role too, and the last statement
     # stops when it still has TEMPORARY by any route.
     "REVOKE TEMPORARY ON DATABASE ${var.database_name} FROM ${var.app_role_name};",
     "-- PostgreSQL 16: act as the owner only for the schema grants, then drop the membership.",
@@ -66,14 +66,21 @@ locals {
     "ALTER DEFAULT PRIVILEGES FOR ROLE ${var.migration_role_name} IN SCHEMA ${var.schema_name} GRANT USAGE, SELECT ON SEQUENCES TO ${var.app_role_name};",
     "RESET ROLE;",
     "REVOKE ${var.migration_role_name} FROM CURRENT_USER;",
-    "DO $$ BEGIN IF has_database_privilege('${var.app_role_name}', '${var.database_name}', 'TEMPORARY') THEN RAISE EXCEPTION 'runtime role ${var.app_role_name} can create temporary tables in ${var.database_name} (through PUBLIC, a role it belongs to, or ownership); a temporary table can shadow a table an unqualified name in a trigger or function refers to. Revoke TEMPORARY from that route and run the bootstrap again.'; END IF; END $$;",
     ], var.pgaudit_enabled ? [
     "CREATE EXTENSION IF NOT EXISTS pgaudit;",
     # Object audit role (pgaudit.role): SELECT/INSERT/UPDATE/DELETE on objects
     # this role holds that privilege on are logged as AUDIT: OBJECT (TRUNCATE
     # is not). It may already exist.
     "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${var.pgaudit_role}') THEN CREATE ROLE ${var.pgaudit_role} NOLOGIN; END IF; END $$;",
-  ] : ["-- pgaudit disabled (pgaudit_enabled = false)"], [""])) : null
+    ] : ["-- pgaudit disabled (pgaudit_enabled = false)"], [
+    # Last statement: stop when the runtime role, or any role it is a member
+    # of, can create temporary tables. has_database_privilege follows only
+    # inherited memberships, so a SET-only (INHERIT FALSE) membership or a
+    # NOINHERIT runtime role would pass it while SET ROLE still reaches the
+    # privilege; pg_has_role MEMBER counts every membership.
+    "DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role('${var.app_role_name}', r.oid, 'MEMBER') AND has_database_privilege(r.oid, '${var.database_name}', 'TEMPORARY')) THEN RAISE EXCEPTION 'runtime role ${var.app_role_name} can create temporary tables in ${var.database_name} (through PUBLIC, ownership, or a role it is a member of, with or without INHERIT or SET); a temporary table can shadow a table an unqualified name in a trigger or function refers to. Revoke TEMPORARY from that route and run the bootstrap again.'; END IF; END $$;",
+    "",
+  ])) : null
 }
 
 # --- Encryption (ADR-023: storage key and secrets key) -----------------------

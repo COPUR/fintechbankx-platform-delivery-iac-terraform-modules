@@ -459,9 +459,13 @@ is not schema-qualified, even inside a `SECURITY DEFINER` function with a fixed 
 `pg_temp` first unless the path names it). So a runtime role with `TEMPORARY` could create, for example, a temporary
 `consents` table and make a trigger that looks up `consents` read its rows instead of the service's table.
 `REVOKE ALL ON DATABASE ... FROM PUBLIC` takes away the `TEMPORARY` that every role gets through `PUBLIC` by default;
-the bootstrap also revokes `TEMPORARY` from the runtime role by name, and its last statement stops the bootstrap when
-`has_database_privilege(<runtime role>, <database>, 'TEMPORARY')` is still true (through `PUBLIC`, a role it belongs
-to, or ownership). Run the file with `psql -v ON_ERROR_STOP=1 --single-transaction -f` so that a stop leaves nothing
+the bootstrap also revokes `TEMPORARY` from the runtime role by name, and its last statement (after the `pgaudit` block)
+stops the bootstrap when the runtime role or any role it is a member of has `TEMPORARY` on the database: through
+`PUBLIC`, ownership, or a membership with or without `INHERIT` or `SET`. It checks every role for which
+`pg_has_role(<runtime role>, <role>, 'MEMBER')` is true, because `has_database_privilege(<runtime role>, ...)` follows
+inherited memberships only, and a `SET`-only membership or a `NOINHERIT` runtime role still reaches the privilege
+through `SET ROLE`. The check runs once, at bootstrap; a later grant to the runtime role is found only by the offline
+drill's check 3 or a review of its memberships. Run the file with `psql -v ON_ERROR_STOP=1 --single-transaction -f` so that a stop leaves nothing
 behind. The migration role gets `CONNECT` only, so it has no `TEMPORARY` either; the check covers the runtime role.
 
 On PostgreSQL 16 the RDS admin is a `CREATEROLE` member of `rds_superuser`, not a superuser, and a role it creates is
@@ -496,17 +500,18 @@ the `CREATE EXTENSION pgaudit` line if the local server has no pgaudit. Expected
 2. `pg_auth_members` shows the admin in the owner role with `admin_option` only (`set_option = false`), and
    `SET ROLE <owner>` as the admin is denied;
 3. as the owner, `CREATE TABLE` in the schema works; as the runtime role, `INSERT`/`UPDATE` on it work (default
-   privileges) while `CREATE TABLE` in the schema or in `public` and `TRUNCATE` are denied;
+   privileges) while `CREATE TABLE` in the schema or in `public` and `TRUNCATE` are denied, and `CREATE TEMP TABLE`
+   fails with `permission denied to create temporary tables in database`. A copy of the SQL without the
+   `REVOKE ALL ON DATABASE ... FROM PUBLIC` line stops at the `TEMPORARY` check and leaves no role behind, and so does a
+   copy that grants the runtime role a `SET`-only membership (`WITH INHERIT FALSE, SET TRUE`) in a role holding
+   `TEMPORARY`;
 4. after the audit-table convention above, the runtime role can `INSERT` but not `UPDATE` or `TRUNCATE` the audit
    table, and `TRUNCATE` by the owner fails with `TRUNCATE on <schema>.<audit_table> refused: audit table is
    append-only` (as a local superuser, also after `SET session_replication_role = replica`). For a partitioned audit
    table with the trigger on the parent only, `TRUNCATE <partition>` by the owner succeeds and the
    unguarded-children query above (`pg_inherits`) lists the partition; after the convention is applied to each
    partition, `TRUNCATE <partition>` is refused and the query returns no rows;
-5. re-running the `rds_pgaudit` `DO` block succeeds;
-6. as the runtime role, `CREATE TEMP TABLE` fails with `permission denied to create temporary tables in database`, and
-   a copy of the SQL without the `REVOKE ALL ON DATABASE ... FROM PUBLIC` line stops at the `TEMPORARY` check and
-   leaves no role behind.
+5. re-running the `rds_pgaudit` `DO` block succeeds.
 
 Two more checks, run as the RDS master user, for services whose migrations need them:
 
