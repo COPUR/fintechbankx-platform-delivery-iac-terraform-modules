@@ -92,6 +92,46 @@ run "login_sql_desired_state" {
     condition     = jsonencode(output.operator_logins) == jsonencode({ "jane.doe@bank.example" = "op_jane_doe", "omar.k@bank.example" = "op_omar_k" })
     error_message = "operator_logins echoes the map."
   }
+
+  assert {
+    condition     = strcontains(output.login_sql, "ro         constant boolean := false;") && strcontains(output.login_sql, "RESET default_transaction_read_only")
+    error_message = "Without read_only the logins keep no read-only default (a switch back resets it)."
+  }
+}
+
+run "read_only_logins" {
+  command = plan
+
+  variables {
+    service_slug        = "loan-lifecycle-service"
+    database_name       = "db_ln_loan_lifecycle_dev"
+    operator_group_role = "loan_lifecycle_readonly"
+    reserved_db_users   = ["loan_admin", "loan_lifecycle_app", "loan_lifecycle_owner"]
+    read_only           = true
+  }
+
+  assert {
+    condition     = aws_iam_policy.connect.name == "dev-loan-lifecycle-service-db-readonly-login"
+    error_message = "A read-only module instance has its own policy name, so it can sit next to an operator one."
+  }
+
+  assert {
+    condition     = strcontains(output.login_sql, "ro         constant boolean := true;") && strcontains(output.login_sql, "SET default_transaction_read_only = on")
+    error_message = "Read-only logins default every transaction to read only."
+  }
+
+  assert {
+    condition = alltrue([for check in [
+      "has_database_privilege(grp, db, 'CREATE')",
+      "has_schema_privilege(grp, n.oid, 'CREATE')",
+      "has_table_privilege(grp, c.oid, 'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')",
+      "has_any_column_privilege(grp, c.oid, 'INSERT,UPDATE,REFERENCES')",
+      "has_sequence_privilege(grp, c.oid, 'USAGE,UPDATE')",
+      "p.prosecdef",
+      "can change data in",
+    ] : strcontains(output.login_sql, check)])
+    error_message = "In read-only mode the SQL stops when the group can write anything in the database, owns anything, or can run a SECURITY DEFINER function."
+  }
 }
 
 run "login_needs_op_prefix" {

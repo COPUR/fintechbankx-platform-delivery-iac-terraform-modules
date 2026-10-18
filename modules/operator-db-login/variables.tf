@@ -93,6 +93,12 @@ variable "idle_in_transaction_timeout_seconds" {
   }
 }
 
+variable "read_only" {
+  type        = bool
+  description = "Logins that may only read, such as a pre-cutover check: each login defaults every transaction to read only, and the login SQL stops when the group can change anything in the database (a write, CREATE or ownership the service's migration gave it, or EXECUTE on a SECURITY DEFINER function). The policy is named <env>-<slug>-db-readonly-login instead of -db-operator-login."
+  default     = false
+}
+
 variable "tags" {
   type        = map(string)
   description = "Resource tags."

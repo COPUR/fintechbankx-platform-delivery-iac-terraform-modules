@@ -8,7 +8,8 @@ example the accounts ledger's outbox discard audit) name the person, not a share
 
 ## What it creates
 
-- AWS side: one customer managed policy, `<env>-<slug>-db-operator-login`, with one statement per operator:
+- AWS side: one customer managed policy, `<env>-<slug>-db-operator-login` (`-db-readonly-login` in read-only
+  mode), with one statement per operator:
   `rds-db:connect` on `dbuser:<cluster resource id>/<their login>` only, with the condition
   `aws:userid` like `*:<their Identity Center user name>`. A permission-set session's `aws:userid` is
   `<role id>:<user name>`, a session name IAM Identity Center sets and the person cannot choose, so nobody can
@@ -28,6 +29,26 @@ example the accounts ledger's outbox discard audit) name the person, not a share
 What the group may do inside the service's schema is granted by the service's own migration (the schema owner
 grants on its tables), never by this module.
 
+## Read-only mode
+
+`read_only = true` is for people who must only read the service database, such as the person running a
+pre-cutover check (the loan service's old-schedule check). It changes two things:
+
+- Each login's sessions default to `default_transaction_read_only = on`.
+- `login_sql` ends by checking what the group can do in `database_name`, as PostgreSQL decides it (the group's
+  own grants and PUBLIC's), outside the system schemas. It stops, naming each finding, when the group has CREATE
+  on the database or a schema; INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES or TRIGGER on a table or view of
+  any kind, or a column-level INSERT, UPDATE or REFERENCES; USAGE or UPDATE on a sequence; ownership of a
+  relation, schema or function; or EXECUTE on a SECURITY DEFINER function that is not part of an extension.
+
+The service's migration still grants the group (SELECT on what the check reads). Re-run `login_sql` after every
+release of the service: a release whose migration gave the group more than reading makes it stop, and the DBA
+takes that to the service's squad before anyone uses these logins again.
+
+A login belongs to one group, so a person who needs both kinds of access gets one login per module instance
+(for example `op_<name>` in the operator instance and `op_<name>_ro` in the read-only one); the SQL stops when a
+listed login is already a member of another group.
+
 ## Order
 
 1. Apply the stack that calls this module (creates the policy).
@@ -36,6 +57,7 @@ grants on its tables), never by this module.
    `terraform output -raw <module>_login_sql > login.sql`, then
    `psql "<master connection>" -v ON_ERROR_STOP=1 --single-transaction -f login.sql`.
 4. Deploy the service release whose migration grants the group (it fails closed while the group is missing).
+5. In read-only mode, run `login_sql` again: it now checks the grants that release made.
 
 To remove a person: delete their entry, apply, and run the new `login_sql`.
 
@@ -64,6 +86,9 @@ operator host (`operator-access` output `operator_security_group_id`).
 - `idle_in_transaction_session_timeout` is a session default: an operator can change it with `SET` in their own
   session. It stops a transaction forgotten at the prompt, not one an operator keeps open on purpose; the
   database's log shows such a session, and `pg_terminate_backend` by the DBA ends it.
+- In read-only mode, `default_transaction_read_only` is a session default too: a login can turn it off. The
+  privileges are what keep the logins from writing, and `login_sql` proves them only when it runs, so it is
+  re-run after every release. A grant made by hand between runs is not seen until the next run.
 
 ## Inputs
 
@@ -78,6 +103,7 @@ operator host (`operator-access` output `operator_security_group_id`).
 | `reserved_db_users` | `list(string)` | required | The service's master, runtime and migration users. |
 | `connection_limit` | `number` | `2` | Sessions per login, 1..10. |
 | `idle_in_transaction_timeout_seconds` | `number` | `60` | `idle_in_transaction_session_timeout` of each login, 5..600 s. |
+| `read_only` | `bool` | `false` | Read-only logins (see Read-only mode); the policy is named `-db-readonly-login`. |
 | `tags` | `map(string)` | `{}` | Tags. |
 
 ## Outputs

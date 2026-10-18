@@ -39,8 +39,8 @@ locals {
 }
 
 resource "aws_iam_policy" "connect" {
-  name        = "${var.environment}-${var.service_slug}-db-operator-login"
-  description = "IAM database authentication to ${var.database_name}: each operator as their own login only"
+  name        = "${var.environment}-${var.service_slug}-db-${var.read_only ? "readonly" : "operator"}-login"
+  description = "IAM database authentication to ${var.database_name}: each ${var.read_only ? "read-only " : ""}operator as their own login only"
   policy      = jsonencode(local.policy)
   tags        = merge(var.tags, { "fintechbankx.io/service-slug" = var.service_slug })
 

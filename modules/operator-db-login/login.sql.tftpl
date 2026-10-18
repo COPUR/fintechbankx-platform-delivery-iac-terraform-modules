@@ -15,6 +15,13 @@
 --   longer listed also loses LOGIN and rds_iam. Roles are kept, not dropped, so names in
 --   audit rows keep pointing at the same person.
 -- - The service's own users (${reserved}) can never be the group or a login.
+%{ if read_only ~}
+-- - Read only: each login defaults every transaction to read only, and the SQL stops when
+--   ${group} can change anything in ${database_name}: CREATE on the database or a schema, any
+--   write privilege on a table, column or sequence (directly or through PUBLIC), ownership, or
+--   EXECUTE on a SECURITY DEFINER function. Re-run it after each release of the service: its
+--   migration grants the group, and this proves the grants still only read.
+%{ endif ~}
 SET LOCAL lock_timeout = '5s';
 
 DO $fbx$
@@ -25,6 +32,7 @@ DECLARE
     reserved   constant text[] := ARRAY[${reserved}];
     conn_limit constant int    := ${connection_limit};
     idle_tx    constant text   := '${idle_tx_seconds}s';
+    ro         constant boolean := ${read_only};
     op   text;
     bad  text;
 BEGIN
@@ -116,8 +124,61 @@ BEGIN
             RAISE EXCEPTION 'role % has role attributes (superuser, createrole, createdb, replication or bypassrls)', op;
         END IF;
         EXECUTE format('ALTER ROLE %I SET idle_in_transaction_session_timeout = %L', op, idle_tx);
+        IF ro THEN
+            EXECUTE format('ALTER ROLE %I SET default_transaction_read_only = on', op);
+        ELSE
+            EXECUTE format('ALTER ROLE %I RESET default_transaction_read_only', op);
+        END IF;
         EXECUTE format('GRANT rds_iam TO %I', op);
         EXECUTE format('GRANT %I TO %I WITH INHERIT TRUE, SET FALSE', grp, op);
     END LOOP;
+
+    -- Read only: what the group can do, as PostgreSQL decides it (its own grants and PUBLIC's; the
+    -- group is a member of nothing), outside the system schemas. A session default can be changed
+    -- by its login, so the privileges are what keeps these logins from writing.
+    IF ro THEN
+        SELECT string_agg(what, '; ') INTO bad FROM (
+            SELECT format('CREATE on database %I', db) AS what
+             WHERE has_database_privilege(grp, db, 'CREATE')
+            UNION ALL
+            SELECT format('CREATE on schema %I', n.nspname)
+              FROM pg_namespace n
+             WHERE n.nspname NOT LIKE 'pg\_%' AND n.nspname <> 'information_schema'
+               AND has_schema_privilege(grp, n.oid, 'CREATE')
+            UNION ALL
+            SELECT format('a write privilege on %s', c.oid::regclass)
+              FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+             WHERE n.nspname NOT LIKE 'pg\_%' AND n.nspname <> 'information_schema'
+               AND CASE WHEN c.relkind IN ('r', 'p', 'v', 'm', 'f')
+                        THEN has_table_privilege(grp, c.oid, 'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+                             OR has_any_column_privilege(grp, c.oid, 'INSERT,UPDATE,REFERENCES') END
+            UNION ALL
+            SELECT format('USAGE or UPDATE on sequence %s', c.oid::regclass)
+              FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+             WHERE n.nspname NOT LIKE 'pg\_%' AND n.nspname <> 'information_schema'
+               -- CASE: has_sequence_privilege fails on anything but a sequence, whatever order the
+               -- planner evaluates the conditions in.
+               AND CASE WHEN c.relkind = 'S' THEN has_sequence_privilege(grp, c.oid, 'USAGE,UPDATE') END
+            UNION ALL
+            SELECT format('EXECUTE on SECURITY DEFINER function %s', p.oid::regprocedure)
+              FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+             WHERE n.nspname NOT LIKE 'pg\_%' AND n.nspname <> 'information_schema' AND p.prosecdef
+               AND NOT EXISTS (SELECT 1 FROM pg_depend d
+                                WHERE d.classid = 'pg_proc'::regclass AND d.objid = p.oid AND d.deptype = 'e')
+               AND has_function_privilege(grp, p.oid, 'EXECUTE')
+            UNION ALL
+            SELECT format('ownership of %s', c.oid::regclass)
+              FROM pg_class c JOIN pg_roles r ON r.oid = c.relowner WHERE r.rolname = grp
+            UNION ALL
+            SELECT format('ownership of schema %I', n.nspname)
+              FROM pg_namespace n JOIN pg_roles r ON r.oid = n.nspowner WHERE r.rolname = grp
+            UNION ALL
+            SELECT format('ownership of function %s', p.oid::regprocedure)
+              FROM pg_proc p JOIN pg_roles r ON r.oid = p.proowner WHERE r.rolname = grp
+        ) w;
+        IF bad IS NOT NULL THEN
+            RAISE EXCEPTION 'read-only group % can change data in %: %', grp, db, bad;
+        END IF;
+    END IF;
 END
 $fbx$;
